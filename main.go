@@ -69,10 +69,6 @@ func main() {
 
 	connId := 0
 	showContent, _ := cfg.Bool("log.contents")
-	match, _ := cfg.String("remote.match")
-	replace, _ := cfg.String("remote.replace")
-	matcher := createMatcher(match)
-	replacer := createReplacer(replace)
 
 	for {
 		conn, err := listener.Accept()
@@ -91,8 +87,6 @@ func main() {
 			ErrorSignal:   make(chan bool),
 			prefix:        fmt.Sprintf("Connection #%03d ", connId),
 			showContent:   showContent,
-			matcher:       matcher,
-			replacer:      replacer,
 		}
 		go p.start()
 	}

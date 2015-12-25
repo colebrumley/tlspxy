@@ -21,9 +21,7 @@ var DEFAULT_CONFIG = map[string]interface{}{
 		},
 	},
 	"remote": map[string]interface{}{
-		"match":   "",
-		"replace": "",
-		"addr":    "google.com:443",
+		"addr": "google.com:443",
 		"tls": map[string]interface{}{
 			"verify":      true,
 			"passthrough": false,

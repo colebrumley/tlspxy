@@ -75,14 +75,6 @@ func (p *Proxy) pipe(src, dst net.Conn) {
 			return
 		}
 		b := buff[:n]
-		//execute match
-		if p.matcher != nil {
-			p.matcher(b)
-		}
-		//execute replace
-		if p.replacer != nil {
-			b = p.replacer(b)
-		}
 
 		//show output
 		if p.showContent {

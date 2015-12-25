@@ -16,6 +16,4 @@ type Proxy struct {
 	ErrorSignal            chan bool
 	prefix                 string
 	showContent            bool
-	matcher                func([]byte)
-	replacer               func([]byte) []byte
 }

@@ -44,3 +44,4 @@ Option Path | Environment | Flag | Description
 `remote.tls.ca` | `REMOTE_TLS_CA` | `-remote-tls-ca` | The CA to present to the remote server
 `log.level` | `LOG_LEVEL` | `-log-level` | The log-level to use. Options are `debug`, `info`, `warning`, or `error`. The default is `info`.
 `log.contents` | `LOG_CONTENTS` | `-log-contents` | When used in conjunction with `log.level=debug`, prints the raw contents of the TCP stream. If remote TLS is enabled, the output will be encrypted.
+`log.destination` | `LOG_DESTINATION` | `-log-destination` | Where to send log output. Options are `stdout` (the default) or `syslog://your-syslog-server` (ex: `syslog://localhost:514`)

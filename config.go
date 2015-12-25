@@ -21,14 +21,14 @@ var DEFAULT_CONFIG = map[string]interface{}{
 		},
 	},
 	"remote": map[string]interface{}{
-		"addr": "google.com:443",
+		"addr": "104.236.255.159:8500",
 		"tls": map[string]interface{}{
-			"verify":      true,
+			"verify":      false,
 			"passthrough": false,
 			"cert":        "",
 			"key":         "",
 			"ca":          "",
-			"sysroots":    true,
+			"sysroots":    false,
 		},
 	},
 	"log": map[string]interface{}{

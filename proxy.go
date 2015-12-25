@@ -34,11 +34,8 @@ func (p *Proxy) start() {
 		p.RemoteTlsConf.BuildNameToCertificate()
 		rConn, err = tls.Dial("tcp", p.RemoteAddr.String(), p.RemoteTlsConf)
 	} else {
-		var rc *net.TCPConn
 		isTLS = false
-		rc, err = net.DialTCP("tcp", nil, p.RemoteAddr)
-		rc.SetNoDelay(true)
-		rConn = rc
+		rConn, err = net.DialTCP("tcp", nil, p.RemoteAddr)
 	}
 	if err != nil {
 		p.err("Remote connection failed: %s", err)

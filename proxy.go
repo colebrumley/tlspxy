@@ -31,10 +31,14 @@ func (p *Proxy) start() {
 
 	if p.RemoteTlsConf != nil {
 		isTLS = true
+		p.RemoteTlsConf.BuildNameToCertificate()
 		rConn, err = tls.Dial("tcp", p.RemoteAddr.String(), p.RemoteTlsConf)
 	} else {
+		var rc *net.TCPConn
 		isTLS = false
-		rConn, err = net.DialTCP("tcp", nil, p.RemoteAddr)
+		rc, err = net.DialTCP("tcp", nil, p.RemoteAddr)
+		rc.SetNoDelay(true)
+		rConn = rc
 	}
 	if err != nil {
 		p.err("Remote connection failed: %s", err)

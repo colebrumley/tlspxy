@@ -1,5 +1,3 @@
-# tlspxy - A small TLS termination proxy
-
 `tlspxy` is A small TCP-based TLS termination proxy that supports x509 cert verification on either the proxy or upstream servers.
 
 ## Build

@@ -1,12 +1,10 @@
 package main
 
 import (
-	// "fmt"
 	"crypto/tls"
 	log "github.com/Sirupsen/logrus"
 	"io"
 	"net"
-	// "net/http"
 )
 
 func (p *Proxy) err(s string, err error) {

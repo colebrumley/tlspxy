@@ -21,7 +21,7 @@ var DEFAULT_CONFIG = map[string]interface{}{
 		},
 	},
 	"remote": map[string]interface{}{
-		"addr": "104.236.255.159:8500",
+		"addr": "",
 		"tls": map[string]interface{}{
 			"verify":      false,
 			"passthrough": false,

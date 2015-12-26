@@ -24,7 +24,7 @@ Golang's TLS implementation is [pretty strict](http://www.bite-code.com/2015/06/
 WARN[0039] Connection #001 Remote connection failed: x509: cannot validate certificate for 216.58.219.238 because it doesn't contain any IP SANs
 ```
 
-In short, if verification is on _everything_ will be verified. SANs, DNS names, server names, all of it. To run a proxy to google with the containerized binary, run `docker run -it --rm -p 9898:9898 elcolio/tlspxy -remote-tls-verify false`.
+In short, if verification is on _everything_ will be verified. IP addresses, SANs, DNS names, all of it. To run a proxy to google with the containerized binary, run `docker run -it --rm -p 9898:9898 elcolio/tlspxy -remote-tls-verify false`.
 
 ## Still working on
 `tlspxy` is a work in progress. Currently, it can handle TLS on the proxy or upstream sides and do verification, but does not do TLS passthrough.

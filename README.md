@@ -1,6 +1,6 @@
 # tlspxy - A small TLS termination proxy
 
-`tlspxy` is A small TCP-based TLS termination proxy that supports x509 cert verification on either the proxy or upstream servers. It is also capable of TLS passthrough, so `tlspxy` will handle verification but still pass the client's cert upstream for things like cert CN auth.
+`tlspxy` is A small TCP-based TLS termination proxy that supports x509 cert verification on either the proxy or upstream servers.
 
 ## Build
 The build is Docker-based. Provided you have docker installed already, run `build/build.sh`. You will end up with an image tagged as `elcolio/tlspxy:latest` which contains a statically linked linux/x64 binary. If you just want the binary, run the following commands to copy it into your local directory (I'm using the `docker cp` method versus mounting volumes since that works with remote `docker-machine` instances):
@@ -25,6 +25,3 @@ WARN[0039] Connection #001 Remote connection failed: x509: cannot validate certi
 ```
 
 In short, if verification is on _everything_ will be verified. IP addresses, SANs, DNS names, all of it. To run a proxy to google with the containerized binary, run `docker run -it --rm -p 9898:9898 elcolio/tlspxy -remote-tls-verify false`.
-
-## Still working on
-`tlspxy` is a work in progress. Currently, it can handle TLS on the proxy or upstream sides and do verification, but does not do TLS passthrough.

@@ -5,13 +5,14 @@ The configuration for `tlspxy` is based on [github.com/olebedev/config](http://g
 
 ## Loading
 `tlspxy` loads its configuration in the following order. Later steps overwrite previous ones:
+
 1. Load the default config template (hard-coded)
 2. Load the first `.yml` or `.json` file found in the current directory
 3. Parse the OS environment
 4. Parse command line flags
 
 ### YAML example
-Default options are omitted. This config will listen on `0.0.0.0:9898` and proxy that connection to `google.com:443`. The remote server's TLS cert will be verified against the system's root CA list.
+Default options are omitted. This config will listen on `0.0.0.0:9898` and proxy that connection to `google.com:443`. The remote server's TLS cert will not be verified because of strict IP SAN checking.
 
 ```yaml
 log:
@@ -21,7 +22,7 @@ remote:
   addr: google.com:443
   tls:
     sysroots: true
-    verify: true
+    verify: false
 ```
 
 ## Options
@@ -33,8 +34,6 @@ Option Path | Environment | Flag | Description
 `server.tls.cert` | `SERVER_TLS_CERT` | `-server-tls-cert` | The local server's TLS cert
 `server.tls.key` | `SERVER_TLS_KEY` | `-server-tls-key` | The local server's TLS key
 `server.tls.ca` | `SERVER_TLS_CA` | `-server-tls-ca` | The local server's TLS CA
-`remote.match` | `REMOTE_MATCH` | `-remote-match` | Regex string to match in remote responses. Matches will be shown in stdout.
-`remote.replace` | `REMOTE_REPLACE` | `-remote-replace` | Regex string to replace in remote responses in the format `find~replace`
 `remote.addr` | `REMOTE_ADDR` | `-remote-addr` | Remote server address
 `remote.tls.verify` | `REMOTE_TLS_VERIFY` | `-remote-tls-verify` | Verify the remote server's TLS cert
 `remote.tls.sysroots` | `REMOTE_TLS_SYSROOTS` | `-remote-tls-sysroots` | Load the system's root CA list

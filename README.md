@@ -1,5 +1,3 @@
-`tlspxy` is A small TCP-based TLS termination proxy that supports x509 cert verification on either the proxy or upstream servers.
-
 ## Build
 The build is Docker-based. Provided you have docker installed already, run `build/build.sh`. You will end up with an image tagged as `elcolio/tlspxy:latest` which contains a statically linked linux/x64 binary. If you just want the binary, run the following commands to copy it into your local directory (I'm using the `docker cp` method versus mounting volumes since that works with remote `docker-machine` instances):
 

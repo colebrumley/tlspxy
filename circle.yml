@@ -10,7 +10,7 @@ machine:
 dependencies:
   override:
     - docker login -e $DOCKER_EMAIL -u $DOCKER_REPO_LOGIN -p $DOCKER_PASS
-    - ./build/build.sh
+    - sudo ./build/build.sh
 
 test:
   override:

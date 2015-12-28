@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	log "github.com/Sirupsen/logrus"
 	"github.com/olebedev/config"
@@ -9,52 +10,38 @@ import (
 	"strings"
 )
 
-var DEFAULT_CONFIG = map[string]interface{}{
-	"server": map[string]interface{}{
-		"addr": ":9898",
-		"tls": map[string]interface{}{
-			"verify":  false,
-			"require": false,
-			"cert":    "",
-			"key":     "",
-			"ca":      "",
-		},
-	},
-	"remote": map[string]interface{}{
-		"addr": "",
-		"tls": map[string]interface{}{
-			"verify":      false,
-			"passthrough": false,
-			"cert":        "",
-			"key":         "",
-			"ca":          "",
-			"sysroots":    false,
-		},
-	},
-	"log": map[string]interface{}{
-		"level":       "info",
-		"contents":    false,
-		"destination": "stdout",
-	},
-}
-
 func getConfig() (cfg *config.Config, err error) {
 	dirname, _ := os.Getwd()
 	files, err := ioutil.ReadDir(dirname)
 	if err != nil {
 		log.Error(err)
 	}
+
+	allConfigs := []*config.Config{}
 	for _, f := range files {
+		if !isCfgFile(f.Name()) {
+			continue
+		}
+		var c *config.Config
 		if strings.HasSuffix(f.Name(), ".yml") || strings.HasSuffix(f.Name(), ".yaml") {
-			cfg, err = config.ParseYamlFile(f.Name())
-			break
+			c, err = config.ParseYamlFile(f.Name())
+			if err != nil {
+				return
+			}
+			allConfigs = append(allConfigs, c)
 		}
 
 		if strings.HasSuffix(f.Name(), ".json") {
-			cfg, err = config.ParseJsonFile(f.Name())
-			break
+			c, err = config.ParseJsonFile(f.Name())
+			if err != nil {
+				return
+			}
+			allConfigs = append(allConfigs, c)
 		}
 	}
+
+	cfg = combineConfigs(allConfigs...)
+
 	if cfg == nil {
 		cfg = &config.Config{
 			Root: DEFAULT_CONFIG,
@@ -76,4 +63,33 @@ func prettyPrintFlagMap(m map[string]interface{}, prefix []string) {
 			prettyPrintFlagMap(v.(map[string]interface{}), append(prefix, k))
 		}
 	}
+}
+
+func combineConfigs(cfgs ...*config.Config) (r *config.Config) {
+	r = nil
+	for _, conf := range cfgs {
+		for k, v := range conf.Root.(map[string]interface{}) {
+			if r == nil {
+				r = &config.Config{
+					Root: map[string]interface{}{},
+				}
+			}
+			r.Root.(map[string]interface{})[k] = v
+		}
+	}
+	return
+}
+
+func isCfgFile(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	if scanner.Scan() && scanner.Text() == "#tlspxy" {
+		return true
+	}
+	return false
 }

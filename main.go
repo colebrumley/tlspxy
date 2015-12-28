@@ -15,8 +15,6 @@ import (
 	"strings"
 )
 
-var cfg *config.Config
-
 func init() {
 	var err error
 	// Load config from local yml/json file, env, or flags
@@ -26,7 +24,7 @@ func init() {
 	}
 	flag.Usage = func() {
 		fmt.Println("Description:    TLSpxy - Tiny TLS termination tool")
-		fmt.Println("Usage:          tlspxy [OPTIONS] (see docs/configuration.md)\nOptions:")
+		fmt.Println("Usage:          tlspxy [OPTIONS]\nOptions:")
 		m, _ := cfg.Map("")
 		prettyPrintFlagMap(m, []string{})
 	}

@@ -1,0 +1,23 @@
+machine:
+  services:
+    - docker
+
+  environment:
+    REPO_USER: elcolio
+    DOCKER_REPO_LOGIN: elcolio
+    DOCKER_EMAIL: cole.brumley@gmail.com
+
+dependencies:
+  override:
+    - docker login -e $DOCKER_EMAIL -u $DOCKER_REPO_LOGIN -p $DOCKER_PASS
+    - ./build/build.sh
+
+test:
+  override:
+    - echo "I'll put a script here eventually"
+
+deployment:
+  latest:
+    branch: master
+    commands:
+      - docker push elcolio/tlspxy:latest

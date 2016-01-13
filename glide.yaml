@@ -1,0 +1,6 @@
+package: .
+import:
+- package: github.com/Sirupsen/logrus
+  subpackages:
+  - hooks/syslog
+- package: github.com/olebedev/config

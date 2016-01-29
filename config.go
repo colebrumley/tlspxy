@@ -58,7 +58,7 @@ func prettyPrintFlagMap(m map[string]interface{}, prefix []string) {
 		}
 		switch v.(type) {
 		case string, int, bool:
-			fmt.Printf("  %s default=%+v\n", flagName, v)
+			fmt.Printf("  %s=%+v\n", flagName, v)
 		case map[string]interface{}:
 			prettyPrintFlagMap(v.(map[string]interface{}), append(prefix, k))
 		}

@@ -41,7 +41,7 @@ func SetSystemCAPool(capool *x509.CertPool) error {
 			return err
 		}
 		if !capool.AppendCertsFromPEM(data) {
-			return errors.New("No certificates could be loaded from SystemRootCertificates.keychain.")
+			return fmt.Errorf("No certificates could be loaded from SystemRootCertificates.keychain.")
 		}
 		return nil
 	default:

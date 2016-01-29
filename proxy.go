@@ -7,6 +7,18 @@ import (
 	"net"
 )
 
+type Proxy struct {
+	SentBytes              uint64
+	ReceivedBytes          uint64
+	ServerAddr, RemoteAddr *net.TCPAddr
+	ServerConn, RemoteConn net.Conn
+	RemoteTlsConf          *tls.Config
+	ErrorState             bool
+	ErrorSignal            chan bool
+	prefix                 string
+	showContent            bool
+}
+
 func (p *Proxy) err(s string, err error) {
 	if p.ErrorState {
 		return

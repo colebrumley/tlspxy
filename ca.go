@@ -45,19 +45,15 @@ func SetSystemCAPool(capool *x509.CertPool) error {
 		}
 		return nil
 	default:
-		loaded := 0
 		for _, cf := range certfiles {
 			if _, err := os.Stat(cf); err == nil {
 				if cfc, err := ioutil.ReadFile(cf); err == nil {
 					if !capool.AppendCertsFromPEM(cfc) {
 						return fmt.Errorf("Could not load certificates from %s: %v", cf, err)
 					}
-					loaded++
+					return nil
 				}
 			}
-		}
-		if loaded > 0 {
-			return nil
 		}
 	}
 	return fmt.Errorf("Could not find certificates in any of: %v", certfiles)

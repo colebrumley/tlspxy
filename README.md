@@ -32,14 +32,15 @@ The configuration for `tlspxy` is based on [github.com/olebedev/config](http://g
 `tlspxy` loads its configuration in the following order. Later steps overwrite previous ones:
 
 1. Load the default config template (hard-coded)
-2. Load the first `.yml` or `.json` file found in the current directory
+2. Load any `.yml` or `.json` files found in the current directory
 3. Parse the OS environment
 4. Parse command line flags
 
 #### YAML example
-Default options are omitted. This config will listen on `0.0.0.0:9898` and proxy that connection to `google.com:443`. The remote server's TLS cert will not be verified because of strict IP SAN checking.
+Config files for tlspxy _must_ begin with `#tlspxy`. Default options can be omitted. This config will listen on `0.0.0.0:9898` and proxy that connection to `google.com:443`. The remote server's TLS cert will not be verified because of strict IP SAN checking.
 
 ```yaml
+#tlspxy
 log:
   contents: false
   level: debug

@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -31,35 +30,31 @@ func SetSystemCAPool(capool *x509.CertPool) error {
 		"/system/etc/security/cacerts",           // Android
 		"/ssl/CA/ca-chain.pem",                   // Enteon digicert chain
 	}
-	goos := runtime.GOOS
-	if goos == "windows" {
-		return errors.New("SetSystemCAPool not implemented on Windows.")
-	}
-	if goos == "darwin" {
+
+	switch runtime.GOOS {
+	case "windows":
+		return fmt.Errorf("SetSystemCAPool not implemented on Windows.")
+	case "darwin":
 		cmd := exec.Command("/usr/bin/security", "find-certificate", "-a", "-p", "/System/Library/Keychains/SystemRootCertificates.keychain")
 		data, err := cmd.Output()
 		if err != nil {
 			return err
 		}
-		didit := capool.AppendCertsFromPEM(data)
-		if didit == false {
-			return errors.New("No certificates could be loaded from SystemRootCertificates.keychain.")
+		if !capool.AppendCertsFromPEM(data) {
+			return fmt.Errorf("No certificates could be loaded from SystemRootCertificates.keychain.")
 		}
 		return nil
-	}
-	for _, cf := range certfiles {
-		_, err := os.Stat(cf)
-		if err == nil {
-			cfc, err := ioutil.ReadFile(cf)
-			if err == nil {
-				if capool.AppendCertsFromPEM(cfc) == false {
-					s := fmt.Sprintf("Could not load certificates from %s: %v", cf, err)
-					return errors.New(s)
+	default:
+		for _, cf := range certfiles {
+			if _, err := os.Stat(cf); err == nil {
+				if cfc, err := ioutil.ReadFile(cf); err == nil {
+					if !capool.AppendCertsFromPEM(cfc) {
+						return fmt.Errorf("Could not load certificates from %s: %v", cf, err)
+					}
+					return nil
 				}
-				return nil
 			}
 		}
 	}
-	s := fmt.Sprintf("Could not find certificates in any of: %v", certfiles)
-	return errors.New(s)
+	return fmt.Errorf("Could not find certificates in any of: %v", certfiles)
 }

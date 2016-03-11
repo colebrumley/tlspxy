@@ -63,7 +63,6 @@ Option Path | Environment | Flag | Description
 `remote.addr` | `REMOTE_ADDR` | `-remote-addr` | Remote server address
 `remote.tls.verify` | `REMOTE_TLS_VERIFY` | `-remote-tls-verify` | Verify the remote server's TLS cert
 `remote.tls.sysroots` | `REMOTE_TLS_SYSROOTS` | `-remote-tls-sysroots` | Load the system's root CA list
-`remote.tls.passthrough` | `REMOTE_TLS_PASSTHROUGH` | `-remote-tls-passthrough` | Pass the TLS connection through to the remote server (to allow `tlspxy` to do the verification on behalf of remote)
 `remote.tls.cert` | `REMOTE_TLS_CERT` | `-remote-tls-cert` | The client cert to present to the remote server
 `remote.tls.key` | `REMOTE_TLS_KEY` | `-remote-tls-key` | The key to present to the remote server
 `remote.tls.ca` | `REMOTE_TLS_CA` | `-remote-tls-ca` | The CA to present to the remote server

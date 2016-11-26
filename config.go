@@ -3,11 +3,12 @@ package main
 import (
 	"bufio"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
-	"github.com/olebedev/config"
 	"io/ioutil"
 	"os"
 	"strings"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/olebedev/config"
 )
 
 func getConfig() (cfg *config.Config, err error) {
@@ -44,7 +45,7 @@ func getConfig() (cfg *config.Config, err error) {
 
 	if cfg == nil {
 		cfg = &config.Config{
-			Root: DEFAULT_CONFIG,
+			Root: DefaultConfig,
 		}
 	}
 	return

@@ -3,9 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/olebedev/config"
-	"net"
 )
 
 func init() {
@@ -52,15 +53,15 @@ func main() {
 		log.Error(err)
 	}
 
-	rTls, err := configRemoteTLS(cfg)
+	rTLS, err := configRemoteTLS(cfg)
 	if err != nil {
 		log.Warningf("Skipping client TLS configuration: %v", err)
-		rTls = nil
+		rTLS = nil
 	}
 
 	listener := configServerTLS(inner, cfg)
 
-	connId := 0
+	connID := 0
 	showContent, _ := cfg.Bool("log.contents")
 
 	log.Infof("Opening proxy from %s to %s", l, r)
@@ -70,16 +71,16 @@ func main() {
 			log.Errorf("Failed to accept connection '%s'", err)
 			continue
 		}
-		connId++
+		connID++
 
 		p := &Proxy{
 			ServerConn:    conn,
 			ServerAddr:    laddr,
 			RemoteAddr:    raddr,
-			RemoteTlsConf: rTls,
+			RemoteTLSConf: rTLS,
 			ErrorState:    false,
 			ErrorSignal:   make(chan bool),
-			prefix:        fmt.Sprintf("Connection #%03d ", connId),
+			prefix:        fmt.Sprintf("Connection #%03d ", connID),
 			showContent:   showContent,
 		}
 		go p.start()

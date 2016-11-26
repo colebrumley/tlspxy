@@ -2,17 +2,19 @@ package main
 
 import (
 	"crypto/tls"
-	log "github.com/Sirupsen/logrus"
 	"io"
 	"net"
+
+	log "github.com/Sirupsen/logrus"
 )
 
+// Proxy is the wrapper object for a server
 type Proxy struct {
 	SentBytes              uint64
 	ReceivedBytes          uint64
 	ServerAddr, RemoteAddr *net.TCPAddr
 	ServerConn, RemoteConn net.Conn
-	RemoteTlsConf          *tls.Config
+	RemoteTLSConf          *tls.Config
 	ErrorState             bool
 	ErrorSignal            chan bool
 	prefix                 string
@@ -39,10 +41,10 @@ func (p *Proxy) start() {
 		isTLS bool
 	)
 
-	if p.RemoteTlsConf != nil {
+	if p.RemoteTLSConf != nil {
 		isTLS = true
-		p.RemoteTlsConf.BuildNameToCertificate()
-		rConn, err = tls.Dial("tcp", p.RemoteAddr.String(), p.RemoteTlsConf)
+		p.RemoteTLSConf.BuildNameToCertificate()
+		rConn, err = tls.Dial("tcp", p.RemoteAddr.String(), p.RemoteTLSConf)
 	} else {
 		isTLS = false
 		rConn, err = net.DialTCP("tcp", nil, p.RemoteAddr)

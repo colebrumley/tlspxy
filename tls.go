@@ -8,7 +8,8 @@ import (
 	"io/ioutil"
 )
 
-func LoadTlsConfigFromFiles(cert, key, ca string, loadSystemRoots bool) (tlsConf *tls.Config, err error) {
+// LoadTLSConfigFromFiles takes paths to cert files and loads a Go *tls.Config object
+func LoadTLSConfigFromFiles(cert, key, ca string, loadSystemRoots bool) (tlsConf *tls.Config, err error) {
 	var (
 		tlsCert tls.Certificate
 		caPool  *x509.CertPool

@@ -5,8 +5,9 @@ import (
 )
 
 var (
-	cfg            *config.Config
-	DEFAULT_CONFIG = map[string]interface{}{
+	cfg *config.Config
+	// DefaultConfig is the default config object
+	DefaultConfig = map[string]interface{}{
 		"server": map[string]interface{}{
 			"addr": ":9898",
 			"tls": map[string]interface{}{

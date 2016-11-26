@@ -2,10 +2,11 @@ package main
 
 import (
 	"crypto/tls"
-	log "github.com/Sirupsen/logrus"
-	"github.com/olebedev/config"
 	"net"
 	"os"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/olebedev/config"
 )
 
 func configServerTLS(inner net.Listener, cfg *config.Config) net.Listener {
@@ -14,7 +15,9 @@ func configServerTLS(inner net.Listener, cfg *config.Config) net.Listener {
 	key, _ := cfg.String("server.tls.key")
 	ca, _ := cfg.String("server.tls.ca")
 
-	tlsConf, err := LoadTlsConfigFromFiles(cert, key, ca, false)
+	r := inner
+
+	tlsConf, err := LoadTLSConfigFromFiles(cert, key, ca, false)
 	if err != nil {
 		// If a cert ro key was actually specified, panic
 		if len(cert) > 0 || len(key) > 0 {
@@ -25,7 +28,6 @@ func configServerTLS(inner net.Listener, cfg *config.Config) net.Listener {
 		// Otherwise, continue with non-TLS server
 		log.Warningln("No server TLS config loaded")
 		log.Infoln("Proceeding with non-TLS server")
-		return inner
 	} else {
 		log.Debugf("Loaded TLS config: [cert: %s, key: %s, ca: %s]", cert, key, ca)
 		// Parse the other TLS options.
@@ -38,8 +40,8 @@ func configServerTLS(inner net.Listener, cfg *config.Config) net.Listener {
 			log.Debugf("Setting server.tls.verify -> %v", v)
 			tlsConf.ClientAuth = tls.RequireAndVerifyClientCert
 		}
+		r = tls.NewListener(inner, tlsConf)
 	}
 
-	// Wrap it with our TLS config & return
-	return tls.NewListener(inner, tlsConf)
+	return r
 }

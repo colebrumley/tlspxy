@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/olebedev/config"
 )
@@ -16,7 +17,7 @@ func configRemoteTLS(cfg *config.Config) (tlsConf *tls.Config, err error) {
 
 	if fileExists(cert) && fileExists(key) {
 		log.Debugf("Loading remote TLS config: [cert: %s, key: %s, ca: %s, SystemRoots: %v]", cert, key, ca, useSysRoots)
-		tlsConf, err = LoadTlsConfigFromFiles(cert, key, ca, useSysRoots)
+		tlsConf, err = LoadTLSConfigFromFiles(cert, key, ca, useSysRoots)
 		if err != nil {
 			return
 		}

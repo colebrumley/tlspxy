@@ -1,5 +1,5 @@
 GO_BIN_NAME = tlspxy
-GO_INSTALL_PATH = /usr/local/bin/tlspxy
+GO_INSTALL_PATH = /usr/local/sbin/tlspxy
 DOCKER_IMAGE_NAME = elcolio/tlspxy:latest
 
 dist: deps build docker
@@ -13,7 +13,7 @@ install: build
 	rm -f $(GO_INSTALL_PATH); \
 	mv bin/$(GO_BIN_NAME) $(GO_INSTALL_PATH)
 
-docker: build
+docker:
 	docker build -t $(DOCKER_IMAGE_NAME) .
 
 deps:

@@ -6,7 +6,7 @@ dist: deps build docker
 
 build:
 	mkdir bin; \
-	CGO_ENABLED=0 GO15VENDOREXPERIMENT=1 \
+	export CGO_ENABLED=0 GO15VENDOREXPERIMENT=1; \
 	go build -x -a -installsuffix cgo -o bin/$(GO_BIN_NAME)
 
 install: build
@@ -17,8 +17,9 @@ docker:
 	docker build -t $(DOCKER_IMAGE_NAME) .
 
 deps:
-	go get github.com/Masterminds/glide
-	glide up
+	command -v glide || go get github.com/Masterminds/glide
+	glide update
+	glide install
 
 clean:
 	rm -Rf vendor/ glide.lock tlspxy bin/

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 
+	"os"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/olebedev/config"
 )
@@ -36,12 +38,21 @@ func main() {
 	log.Debugln("Loaded config:\n", c)
 
 	// Convert addresses to *net.TCPAddr
-	l, _ := cfg.String("server.addr")
+	l := cfg.UString("server.addr")
+	if len(l) <= 0 {
+		log.Error("No server address defined!")
+		os.Exit(1)
+	}
 	laddr, err := net.ResolveTCPAddr("tcp", l)
 	if err != nil {
 		log.Error(err)
 	}
-	r, _ := cfg.String("remote.addr")
+
+	r := cfg.UString("remote.addr")
+	if len(r) <= 0 {
+		log.Error("No remote address defined!")
+		os.Exit(1)
+	}
 	raddr, err := net.ResolveTCPAddr("tcp", r)
 	if err != nil {
 		log.Error(err)
@@ -62,7 +73,7 @@ func main() {
 	listener := configServerTLS(inner, cfg)
 
 	connID := 0
-	showContent, _ := cfg.Bool("log.contents")
+	showContent := cfg.UBool("log.contents", false)
 
 	log.Infof("Opening proxy from %s to %s", l, r)
 	for {

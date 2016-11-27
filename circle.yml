@@ -10,6 +10,8 @@ machine:
     REPO_USER: elcolio
     DOCKER_REPO_LOGIN: elcolio
     DOCKER_EMAIL: cole.brumley@gmail.com
+    CGO_ENABLED: 0
+    GO15VENDOREXPERIMENT: 1
 
 dependencies:
   override:

@@ -8,6 +8,17 @@ import (
 	"io/ioutil"
 )
 
+var ciphers = []uint16{
+	tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+	tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+	tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+}
+
 // LoadTLSConfigFromFiles takes paths to cert files and loads a Go *tls.Config object
 func LoadTLSConfigFromFiles(cert, key, ca string, loadSystemRoots bool) (tlsConf *tls.Config, err error) {
 	var (
@@ -56,19 +67,10 @@ func LoadTLSConfigFromFiles(cert, key, ca string, loadSystemRoots bool) (tlsConf
 		ClientCAs:                caPool,
 		RootCAs:                  caPool,
 		PreferServerCipherSuites: true,
-		CipherSuites: []uint16{
-			tls.TLS_RSA_WITH_AES_128_CBC_SHA,
-			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
-			tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
-			tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
-			tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-		},
-		Rand:         rand.Reader,
-		MinVersion:   tls.VersionTLS12,
-		Certificates: []tls.Certificate{tlsCert},
+		CipherSuites:             ciphers,
+		Rand:                     rand.Reader,
+		MinVersion:               tls.VersionTLS12,
+		Certificates:             []tls.Certificate{tlsCert},
 	}
 	return
 }

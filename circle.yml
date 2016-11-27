@@ -17,13 +17,15 @@ machine:
 dependencies:
   override:
     - docker login -e $DOCKER_EMAIL -u $DOCKER_REPO_LOGIN -p $DOCKER_PASS
+    - make deps
 
 test:
   override:
-    - make
+    - make build
 
 deployment:
   latest:
     branch: master
     commands:
+      - make docker
       - docker push elcolio/tlspxy:latest

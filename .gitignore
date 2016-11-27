@@ -1,4 +1,6 @@
-.buildcache
+# Ignore Go dependencies
 vendor/
 glide.lock
-tlspxy
+
+# Ignore binaries
+bin/

@@ -6,6 +6,7 @@ import (
 	"net"
 
 	log "github.com/Sirupsen/logrus"
+	acme "golang.org/x/crypto/acme/autocert"
 )
 
 // Proxy is the wrapper object for a server
@@ -19,6 +20,7 @@ type Proxy struct {
 	ErrorSignal            chan bool
 	prefix                 string
 	showContent            bool
+	certManager            *acme.Manager
 }
 
 func (p *Proxy) err(s string, err error) {
@@ -103,5 +105,12 @@ func (p *Proxy) pipe(src, dst net.Conn) {
 		} else {
 			p.ReceivedBytes += uint64(n)
 		}
+	}
+}
+
+func (p *Proxy) getCertManager() {
+	p.certManager = &acme.Manager{
+		Prompt:     acme.AcceptTOS,
+		HostPolicy: acme.HostWhitelist("example.org"),
 	}
 }

@@ -16,6 +16,11 @@ var (
 				"cert":    "",
 				"key":     "",
 				"ca":      "",
+				"letsencrypt": map[string]interface{}{
+					"enable":   false,
+					"domain":   "example.org",
+					"cachedir": "/tmp/letsencrypt",
+				},
 			},
 		},
 		"remote": map[string]interface{}{

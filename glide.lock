@@ -1,5 +1,5 @@
 hash: 4f089af88aa706836b4e442e698d88a9a8d025226abd0cf5d599d14b250168ec
-updated: 2016-11-26T15:56:23.074412538-06:00
+updated: 2016-11-26T20:13:41.875711704-06:00
 imports:
 - name: github.com/olebedev/config
   version: afea898d27c7d17376ecc60c7c2e73c76b40060e
@@ -7,6 +7,16 @@ imports:
   version: d26492970760ca5d33129d2d799e34be5c4782eb
   subpackages:
   - hooks/syslog
+- name: golang.org/x/crypto
+  version: 9477e0b78b9ac3d0b03822fd95422e2fe07627cd
+  subpackages:
+  - acme
+  - acme/autocert
+- name: golang.org/x/net
+  version: 4971afdc2f162e82d185353533d3cf16188a9f4e
+  subpackages:
+  - context
+  - context/ctxhttp
 - name: golang.org/x/sys
   version: b699b7032584f0953262cb2788a0ca19bb494703
   subpackages:

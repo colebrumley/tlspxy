@@ -23,7 +23,6 @@ dependencies:
 test:
   pre:
     - cd "${GOPATH}/src/${IMPORT_PATH}/" && glide install
-    - cd "${GOPATH}/src/${IMPORT_PATH}/" && go vet ./...
   override:
     - cd "${GOPATH}/src/${IMPORT_PATH}/" && go build -x -a -installsuffix cgo -o ${CIRCLE_ARTIFACTS}/${CIRCLE_PROJECT_REPONAME}
 

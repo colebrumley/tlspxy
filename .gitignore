@@ -1,6 +1,6 @@
 # Ignore Go dependencies
-vendor/
+vendor/*
 glide.lock
 
 # Ignore binaries
-bin/
+bin/*

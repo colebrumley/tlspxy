@@ -6,7 +6,7 @@ git clone https://github.com/colebrumley/tlspxy.git
 make
 ```
 
-Note that building on a non-linux OS will produce a broken Docker container (since the Makefile does not implement cross-compilation).
+Note that building on a non-linux OS will produce a broken Docker container since the Makefile does not implement cross-compilation.
 
 To build a binary, run `make deps && make build`.
 

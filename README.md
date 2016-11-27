@@ -1,13 +1,16 @@
 ## Build
-The build is Docker-based. Provided you have docker installed already, run `build/build.sh`. You will end up with an image tagged as `elcolio/tlspxy:latest` which contains a statically linked linux/x64 binary. If you just want the binary, run the following commands to copy it into your local directory (I'm using the `docker cp` method versus mounting volumes since that works with remote `docker-machine` instances):
+To build both a binary and Docker image, clone the repo and run `make`:
 
 ```bash
-docker run -d --name tmp elcolio/tlspxy
-docker cp tmp:/sbin/tlspxy .
-docker rm tmp
-
-sudo mv tlspxy /usr/sbin/ # or wherever
+git clone https://github.com/colebrumley/tlspxy.git
+make
 ```
+
+Note that building on a non-linux OS will produce a broken Docker container (since the Makefile does not implement cross-compilation).
+
+To build a binary, run `make deps && make build`.
+
+To install, run `make deps && make install`. The binary will be placed at `/usr/local/sbin/tlspxy`.
 
 ## Run
 `tlspxy` was meant for running in a Docker container, so several of the environment variables have generic names that could conflict with other applications. The binary itself is happy anywhere golang is, including non-glibc distros like Alpine linux.

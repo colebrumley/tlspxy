@@ -2,9 +2,9 @@ GO_BIN_NAME = tlspxy
 GO_INSTALL_PATH = /usr/local/bin/tlspxy
 DOCKER_IMAGE_NAME = elcolio/tlspxy:latest
 
-dist: build docker
+dist: deps build docker
 
-build: deps
+build:
 	mkdir bin; \
 	CGO_ENABLED=0 GO15VENDOREXPERIMENT=1 \
 	go build -x -a -installsuffix cgo -o bin/$(GO_BIN_NAME)

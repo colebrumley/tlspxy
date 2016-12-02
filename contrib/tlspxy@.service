@@ -1,0 +1,19 @@
+[Unit]
+Description=TLS Proxy: %i
+After=syslog.target network.target
+
+[Service]
+# RHEL variants
+EnvironmentFile=-/etc/sysconfig/tlspxy
+EnvironmentFile=-/etc/sysconfig/tlspxy-%i
+# Debian variants
+EnvironmentFile=-/etc/default/tlspxy
+EnvironmentFile=-/etc/default/tlspxy-%i
+# Generic
+EnvironmentFile=-/etc/tlspxy/global
+EnvironmentFile=-/etc/tlspxy/%i
+
+ExecStart=/usr/local/sbin/tlspxy
+
+[Install]
+WantedBy=multi-user.target

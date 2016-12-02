@@ -1,6 +1,12 @@
-package: .
+package: github.com/colebrumley/tlspxy
 import:
 - package: github.com/Sirupsen/logrus
+  version: ^0.11.0
   subpackages:
   - hooks/syslog
+- package: github.com/imdario/mergo
+  version: ^0.2.2
 - package: github.com/olebedev/config
+- package: golang.org/x/crypto
+  subpackages:
+  - acme/autocert

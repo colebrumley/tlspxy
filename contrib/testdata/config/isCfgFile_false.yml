@@ -1,0 +1,5 @@
+remote:
+  addr: google.com:443
+  tls:
+    sysroots: true
+    verify: false

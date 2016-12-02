@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/imdario/mergo"
 	"github.com/olebedev/config"
 )
 
@@ -41,13 +42,8 @@ func getConfig() (cfg *config.Config, err error) {
 		}
 	}
 
+	allConfigs = append(allConfigs, &config.Config{Root: DefaultConfig})
 	cfg = combineConfigs(allConfigs...)
-
-	if cfg == nil {
-		cfg = &config.Config{
-			Root: DefaultConfig,
-		}
-	}
 	return
 }
 
@@ -66,19 +62,16 @@ func prettyPrintFlagMap(m map[string]interface{}, prefix []string) {
 	}
 }
 
-func combineConfigs(cfgs ...*config.Config) (r *config.Config) {
-	r = nil
+func combineConfigs(cfgs ...*config.Config) *config.Config {
+	root := map[string]interface{}{}
 	for _, conf := range cfgs {
-		for k, v := range conf.Root.(map[string]interface{}) {
-			if r == nil {
-				r = &config.Config{
-					Root: map[string]interface{}{},
-				}
-			}
-			r.Root.(map[string]interface{})[k] = v
+		if err := mergo.Merge(&root, conf.Root.(map[string]interface{})); err != nil {
+			log.Error(err)
 		}
 	}
-	return
+	return &config.Config{
+		Root: root,
+	}
 }
 
 func isCfgFile(path string) bool {

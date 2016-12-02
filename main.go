@@ -27,6 +27,7 @@ func init() {
 		fmt.Println("All options can be set via flags, environment variables, or configuration files.",
 			"\n  -> See http://colebrumley.github.io/tlspxy for details.")
 	}
+	// Load priority => Files < Env < Flag
 	cfg.Env().Flag()
 }
 

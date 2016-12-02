@@ -13,49 +13,55 @@ import (
 
 func configServerTLS(inner net.Listener, cfg *config.Config) net.Listener {
 	// Load server TLS config from cert files
-	cert, _ := cfg.String("server.tls.cert")
-	key, _ := cfg.String("server.tls.key")
-	ca, _ := cfg.String("server.tls.ca")
+	cert := cfg.UString("server.tls.cert")
+	key := cfg.UString("server.tls.key")
+	ca := cfg.UString("server.tls.ca")
 	useLetsencrypt := cfg.UBool("server.tls.letsencrypt.enable", false)
+
+	var (
+		tlsConf *tls.Config
+		err     error
+	)
 
 	r := inner
 
 	// Check for whether server.tls.letsencrypt.enable is true,
 	// and load a LetsEncrypt cert if so.
 	if useLetsencrypt {
+		log.Debug("Enabling LetsEncrypt on Server connection")
 		m := *getCertManager(
 			cfg.UString("server.tls.letsencrypt.domain"),
 			cfg.UString("server.tls.letsencrypt.cachedir"),
 			cfg.UString("server.tls.letsencrypt.email"),
 		)
-
-		r = tls.NewListener(inner, &tls.Config{GetCertificate: m.GetCertificate})
-	} else {
-		tlsConf, err := LoadTLSConfigFromFiles(cert, key, ca, false)
-		if err != nil {
-			// If a cert ro key was actually specified, panic
-			if len(cert) > 0 || len(key) > 0 {
-				log.Errorln("Failed to load requested TLS config: ", err.Error())
-				os.Exit(1)
-			}
-
-			// Otherwise, continue with non-TLS server
-			log.Warningln("No server TLS config loaded")
-			log.Infoln("Proceeding with non-TLS server")
+		tlsConf = &tls.Config{GetCertificate: m.GetCertificate}
+		// See if a cert or key was specified, load a TLS config from it if so
+	} else if len(cert) > 0 || len(key) > 0 {
+		if tlsConf, err = LoadTLSConfigFromFiles(cert, key, ca, false); err != nil {
+			log.Errorln("Failed to load requested TLS config: ", err.Error())
+			os.Exit(1)
 		} else {
-			log.Debugf("Loaded TLS config: [cert: %s, key: %s, ca: %s]", cert, key, ca)
-			// Parse the other TLS options.
-			//   'verify' overrides 'require'
-			if v, _ := cfg.Bool("server.tls.require"); v && tlsConf != nil {
-				log.Debugf("Setting server.tls.require -> %v", v)
-				tlsConf.ClientAuth = tls.RequireAnyClientCert
-			}
-			if v, _ := cfg.Bool("server.tls.verify"); v && tlsConf != nil {
-				log.Debugf("Setting server.tls.verify -> %v", v)
-				tlsConf.ClientAuth = tls.RequireAndVerifyClientCert
-			}
-			r = tls.NewListener(inner, tlsConf)
+			log.Debugf("Loaded Server TLS config: [cert: %s, key: %s, ca: %s]", cert, key, ca)
 		}
+		// Otherwise don't load a TLS config
+	} else {
+		log.Warningln("No server TLS config loaded")
+		log.Infoln("Proceeding with non-TLS server")
+	}
+
+	// Parse the other TLS options.
+	//   'verify' overrides 'require'
+	if v := cfg.UBool("server.tls.require", false); v && tlsConf != nil {
+		log.Debugf("Setting server.tls.require -> %v", v)
+		tlsConf.ClientAuth = tls.RequireAnyClientCert
+	}
+	if v := cfg.UBool("server.tls.verify"); v && tlsConf != nil {
+		log.Debugf("Setting server.tls.verify -> %v", v)
+		tlsConf.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+
+	if tlsConf != nil {
+		r = tls.NewListener(inner, tlsConf)
 	}
 	return r
 }

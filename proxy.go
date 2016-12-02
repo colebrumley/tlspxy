@@ -6,10 +6,11 @@ import (
 	"net"
 
 	log "github.com/Sirupsen/logrus"
-	acme "golang.org/x/crypto/acme/autocert"
 )
 
-// Proxy is the wrapper object for a server
+// Proxy is the wrapper object for a proxy connection. It tracks the amount
+// of data sent and received, local and remote server settings, TLS config,
+// and any connection errors.
 type Proxy struct {
 	SentBytes              uint64
 	ReceivedBytes          uint64
@@ -20,7 +21,6 @@ type Proxy struct {
 	ErrorSignal            chan bool
 	prefix                 string
 	showContent            bool
-	certManager            *acme.Manager
 }
 
 func (p *Proxy) err(s string, err error) {
@@ -46,6 +46,7 @@ func (p *Proxy) start() {
 	if p.RemoteTLSConf != nil {
 		isTLS = true
 		p.RemoteTLSConf.BuildNameToCertificate()
+		log.Debugf("Dialing %s", p.RemoteAddr.String())
 		rConn, err = tls.Dial("tcp", p.RemoteAddr.String(), p.RemoteTLSConf)
 	} else {
 		isTLS = false
@@ -57,14 +58,19 @@ func (p *Proxy) start() {
 	}
 	p.RemoteConn = rConn
 	defer p.RemoteConn.Close()
-	//display both ends
-	log.Infof("%sOpened %s >>> %s TLS=%v", p.prefix, p.ServerConn.RemoteAddr().String(), p.RemoteConn.RemoteAddr().String(), isTLS)
-	//bidirectional copy
+
+	// Log info about both ends of the conn
+	log.Infof("%sOpened connection %s >>> %s TLS=%v", p.prefix,
+		p.ServerConn.RemoteAddr().String(),
+		p.RemoteConn.RemoteAddr().String(), isTLS)
+
+	//bidirectional copy in separate goroutines
 	go p.pipe(p.ServerConn, p.RemoteConn)
 	go p.pipe(p.RemoteConn, p.ServerConn)
 	//wait for close...
 	<-p.ErrorSignal
-	log.Infof("%s Closed (%d bytes sent, %d bytes recieved)", p.prefix, p.SentBytes, p.ReceivedBytes)
+	log.Infof("%s Closed (%d bytes sent, %d bytes recieved)",
+		p.prefix, p.SentBytes, p.ReceivedBytes)
 }
 
 func (p *Proxy) pipe(src, dst net.Conn) {
@@ -87,7 +93,7 @@ func (p *Proxy) pipe(src, dst net.Conn) {
 		}
 		b := buff[:n]
 
-		//show output
+		//show output if necessary
 		if p.showContent {
 			log.Debugf(f, n, "\n"+string(b))
 		} else {
@@ -105,12 +111,5 @@ func (p *Proxy) pipe(src, dst net.Conn) {
 		} else {
 			p.ReceivedBytes += uint64(n)
 		}
-	}
-}
-
-func (p *Proxy) getCertManager() {
-	p.certManager = &acme.Manager{
-		Prompt:     acme.AcceptTOS,
-		HostPolicy: acme.HostWhitelist("example.org"),
 	}
 }

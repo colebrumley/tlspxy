@@ -9,11 +9,11 @@ import (
 )
 
 func configRemoteTLS(cfg *config.Config) (tlsConf *tls.Config, err error) {
-	cert, _ := cfg.String("remote.tls.cert")
-	key, _ := cfg.String("remote.tls.key")
-	ca, _ := cfg.String("remote.tls.ca")
-	doVerify, _ := cfg.Bool("remote.tls.verify")
-	useSysRoots, _ := cfg.Bool("remote.tls.sysroots")
+	cert := cfg.UString("remote.tls.cert")
+	key := cfg.UString("remote.tls.key")
+	ca := cfg.UString("remote.tls.ca")
+	doVerify := cfg.UBool("remote.tls.verify", false)
+	useSysRoots := cfg.UBool("remote.tls.sysroots", false)
 
 	if fileExists(cert) && fileExists(key) {
 		log.Debugf("Loading remote TLS config: [cert: %s, key: %s, ca: %s, SystemRoots: %v]", cert, key, ca, useSysRoots)

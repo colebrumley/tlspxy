@@ -72,10 +72,10 @@ func main() {
 
 	listener := configServerTLS(inner, cfg)
 
-	connID := 0
 	showContent := cfg.UBool("log.contents", false)
 
 	log.Infof("Opening proxy from %s to %s", l, r)
+	connID := 0
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -83,6 +83,7 @@ func main() {
 			continue
 		}
 		connID++
+		log.Infof("Accepted connection #%v from %s", connID, conn.RemoteAddr().String())
 
 		p := &Proxy{
 			ServerConn:    conn,

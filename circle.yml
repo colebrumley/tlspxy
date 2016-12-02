@@ -30,6 +30,6 @@ deployment:
   latest:
     branch: master
     commands:
-      - mkdir bin; cp -a ${CIRCLE_ARTIFACTS}/${CIRCLE_PROJECT_REPONAME} bin/${CIRCLE_PROJECT_REPONAME}
+      - mkdir bin; cp -a ${CIRCLE_ARTIFACTS}/${CIRCLE_PROJECT_REPONAME} bin/${CIRCLE_PROJECT_REPONAME}_linux_x64
       - docker build -t ${REPO_USER}/${CIRCLE_PROJECT_REPONAME}:latest -f contrib/Dockerfile .
       - docker push ${REPO_USER}/${CIRCLE_PROJECT_REPONAME}:latest

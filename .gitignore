@@ -4,3 +4,4 @@ glide.lock
 
 # Ignore binaries
 bin/*
+tlspxy

@@ -1,10 +1,12 @@
 ## Build
-To build both a binary and Docker image, clone the repo and run `make`:
+To build a binary, clone the repo and run `make`:
 
 ```bash
 git clone https://github.com/colebrumley/tlspxy.git
 make
 ```
+
+Run `make docker` to build a Docker image.
 
 Note that building on a non-linux OS will produce a broken Docker container since the Makefile does not implement cross-compilation.
 

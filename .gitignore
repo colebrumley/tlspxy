@@ -5,3 +5,5 @@ glide.lock
 # Ignore binaries
 bin/*
 tlspxy
+
+.DS_Store

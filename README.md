@@ -1,17 +1,10 @@
 ## Build
-To build a binary, clone the repo and run `make`:
-
-```bash
-git clone https://github.com/colebrumley/tlspxy.git
-make
-```
-
-Run `make docker` to build a Docker image.
+Clone the repo and run `make` for a binary or `make docker` for a Docker image. Non-linux (or OSX) distros will need to build manually.
 
 ## Run
-`tlspxy` was meant for running in a Docker container, so several of the environment variables have generic names that could conflict with other applications. The binary itself is happy anywhere golang is, including non-glibc distros like Alpine linux.
+The binary can be run almost anywhere, including non-glibc distros like Alpine linux.
 
-See below for available options and configuration methods.
+A systemd template unit is available at `contrib/tlspxy@.service`. See below for available options and configuration methods, and the [service file](https://github.com/colebrumley/tlspxy/blob/master/contrib/tlspxy%40.service) for default settings paths.
 
 ### TLS warning
 Golang's TLS implementation is [pretty strict](http://www.bite-code.com/2015/06/25/tls-mutual-auth-in-golang/). As a result, you may have to occasionally turn verification off for public websites. For example, attempting to proxy to `google.com:443` with verification on will error with something like:
@@ -59,6 +52,9 @@ Option Path | Environment | Flag | Description
 `server.tls.cert` | `SERVER_TLS_CERT` | `-server-tls-cert` | The local server's TLS cert
 `server.tls.key` | `SERVER_TLS_KEY` | `-server-tls-key` | The local server's TLS key
 `server.tls.ca` | `SERVER_TLS_CA` | `-server-tls-ca` | The local server's TLS CA
+`server.tls.letsencrypt.enable` | `SERVER_TLS_LETSENCRYPT_ENABLE` | `-server-tls-letsencrypt-enable` | Use LetsEncrypt to generate a trusted certificate
+`server.tls.letsencrypt.domain` | `SERVER_TLS_LETSENCRYPT_DOMAIN` | `-server-tls-letsencrypt-domain` | Set the LetsEncrypt domain
+`server.tls.letsencrypt.cachedir` | `SERVER_TLS_LETSENCRYPT_CACHEDIR` | `-server-tls-letsencrypt-cachedir` | Set the LetsEncrypt cache directory
 `remote.addr` | `REMOTE_ADDR` | `-remote-addr` | Remote server address
 `remote.tls.verify` | `REMOTE_TLS_VERIFY` | `-remote-tls-verify` | Verify the remote server's TLS cert
 `remote.tls.sysroots` | `REMOTE_TLS_SYSROOTS` | `-remote-tls-sysroots` | Load the system's root CA list

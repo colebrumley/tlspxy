@@ -1,4 +1,5 @@
 #!/bin/sh
+# Does not work on OSX's native openssl installation!
 cd "$(dirname "$0")"
 exec 2>&1
 openssl s_server \

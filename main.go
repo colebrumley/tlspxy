@@ -11,6 +11,9 @@ import (
 	"github.com/olebedev/config"
 )
 
+// AppVersion is the global application version
+const AppVersion = "0.0.2"
+
 func init() {
 	var err error
 	// Load config from local yml/json file, env, or flags
@@ -19,6 +22,7 @@ func init() {
 		log.Fatal(err)
 	}
 	flag.Usage = func() {
+		fmt.Println("Version:       ", AppVersion)
 		fmt.Println("Description:    TLSpxy - Tiny TLS termination tool")
 		fmt.Println("Usage:          tlspxy [OPTIONS]")
 		fmt.Println("Options:")

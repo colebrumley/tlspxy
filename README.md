@@ -8,12 +8,6 @@ make
 
 Run `make docker` to build a Docker image.
 
-Note that building on a non-linux OS will produce a broken Docker container since the Makefile does not implement cross-compilation.
-
-To build a binary, run `make deps && make build`.
-
-To install, run `make deps && make install`. The binary will be placed at `/usr/local/sbin/tlspxy`.
-
 ## Run
 `tlspxy` was meant for running in a Docker container, so several of the environment variables have generic names that could conflict with other applications. The binary itself is happy anywhere golang is, including non-glibc distros like Alpine linux.
 

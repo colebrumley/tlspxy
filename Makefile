@@ -13,6 +13,9 @@ install: build
 	rm -f $(GO_INSTALL_PATH); \
 	mv bin/$(GO_BIN_NAME) $(GO_INSTALL_PATH)
 
+test:
+	go test -v
+
 docker:
 	docker pull golang:latest
 	docker run -it --rm \

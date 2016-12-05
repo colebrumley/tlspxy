@@ -85,6 +85,32 @@ func Test_combineConfigs(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "Combine overlapping configs",
+			args: args{cfgs: []*config.Config{
+				&config.Config{
+					Root: map[string]interface{}{
+						"log": map[string]interface{}{
+							"level": "debug",
+						},
+					},
+				},
+				&config.Config{
+					Root: map[string]interface{}{
+						"log": map[string]interface{}{
+							"level": "error",
+						},
+					},
+				},
+			}},
+			wantR: &config.Config{
+				Root: map[string]interface{}{
+					"log": map[string]interface{}{
+						"level": "debug",
+					},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		if gotR := combineConfigs(tt.args.cfgs...); !reflect.DeepEqual(gotR, tt.wantR) {

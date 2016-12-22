@@ -39,7 +39,7 @@ func Test_prettyPrintFlagMap(t *testing.T) {
 	// TODO: Add test cases.
 	}
 	for _, tt := range tests {
-		prettyPrintFlagMap(tt.args.m, tt.args.prefix)
+		prettyPrintFlagMap(tt.args.m, tt.args.prefix...)
 	}
 }
 

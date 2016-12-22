@@ -24,8 +24,8 @@ test:
   pre:
     - cd "${GOPATH}/src/${IMPORT_PATH}/" && glide install
   override:
-    - cd "${GOPATH}/src/${IMPORT_PATH}/" && make build
-    - cp -a bin/* $CIRCLE_ARTIFACTS/
+    - cd ${GOPATH}/src/${IMPORT_PATH}/ && make build
+    - pwd; cp -a ${GOPATH}/src/${IMPORT_PATH}/bin/* $CIRCLE_ARTIFACTS/
 
 deployment:
   latest:

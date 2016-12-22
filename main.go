@@ -15,7 +15,10 @@ import (
 )
 
 // AppVersion is the global application version
-const AppVersion = "0.0.2"
+var AppVersion string
+
+// CommitID is the current git commit of this build
+var CommitID string
 
 func main() {
 	var (
@@ -33,7 +36,7 @@ func main() {
 		os.Exit(1)
 	}
 	flag.Usage = func() {
-		fmt.Println("Version:       ", AppVersion)
+		fmt.Println("Version:       ", AppVersion, "| Commit", CommitID)
 		fmt.Println("Description:    TLSpxy - Tiny TLS termination tool")
 		fmt.Println("Usage:          tlspxy [OPTIONS]")
 		fmt.Println("Options:")

@@ -25,10 +25,11 @@ test:
     - cd "${GOPATH}/src/${IMPORT_PATH}/" && glide install
   override:
     - cd "${GOPATH}/src/${IMPORT_PATH}/" && make build
+    - cp -a "${GOPATH}/src/${IMPORT_PATH}/bin/*" $CIRCLE_ARTIFACTS/
 
 deployment:
   latest:
     branch: master
     commands:
-      - docker build -t ${REPO_USER}/${CIRCLE_PROJECT_REPONAME}:latest -f contrib/Dockerfile .
+      - cd "${GOPATH}/src/${IMPORT_PATH}/" && make docker
       - docker push ${REPO_USER}/${CIRCLE_PROJECT_REPONAME}:latest

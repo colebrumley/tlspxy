@@ -47,7 +47,7 @@ func getConfig() (cfg *config.Config, err error) {
 	return
 }
 
-func prettyPrintFlagMap(m map[string]interface{}, prefix []string) {
+func prettyPrintFlagMap(m map[string]interface{}, prefix ...string) {
 	for k, v := range m {
 		flagName := "-" + k
 		if len(prefix) > 0 {
@@ -57,7 +57,7 @@ func prettyPrintFlagMap(m map[string]interface{}, prefix []string) {
 		case string, int, bool:
 			fmt.Printf("  %s=%+v\n", flagName, v)
 		case map[string]interface{}:
-			prettyPrintFlagMap(v.(map[string]interface{}), append(prefix, k))
+			prettyPrintFlagMap(v.(map[string]interface{}), append(prefix, k)...)
 		}
 	}
 }

@@ -2,16 +2,17 @@ package main
 
 import (
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 
 	log "github.com/Sirupsen/logrus"
 )
 
-// Proxy is the wrapper object for a proxy connection. It tracks the amount
+// TCPProxy is the wrapper object for a proxy connection. It tracks the amount
 // of data sent and received, local and remote server settings, TLS config,
 // and any connection errors.
-type Proxy struct {
+type TCPProxy struct {
 	SentBytes              uint64
 	ReceivedBytes          uint64
 	ServerAddr, RemoteAddr *net.TCPAddr
@@ -23,7 +24,7 @@ type Proxy struct {
 	showContent            bool
 }
 
-func (p *Proxy) err(s string, err error) {
+func (p *TCPProxy) err(s string, err error) {
 	if p.ErrorState {
 		return
 	}
@@ -34,7 +35,7 @@ func (p *Proxy) err(s string, err error) {
 	p.ErrorState = true
 }
 
-func (p *Proxy) start() {
+func (p *TCPProxy) start() {
 	defer p.ServerConn.Close()
 	//connect to remote
 	var (
@@ -73,7 +74,7 @@ func (p *Proxy) start() {
 		p.prefix, p.SentBytes, p.ReceivedBytes)
 }
 
-func (p *Proxy) pipe(src, dst net.Conn) {
+func (p *TCPProxy) pipe(src, dst net.Conn) {
 	//data direction
 	var f string
 	islocal := src == p.ServerConn
@@ -111,5 +112,30 @@ func (p *Proxy) pipe(src, dst net.Conn) {
 		} else {
 			p.ReceivedBytes += uint64(n)
 		}
+	}
+}
+
+func serveTCP(listener net.Listener, serverTCPAddr, remoteTCPAddr *net.TCPAddr, showContent bool, rTLS *tls.Config) {
+	connID := 0
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Errorf("Failed to accept connection '%s'", err)
+			continue
+		}
+		connID++
+		log.Infof("Accepted connection #%v from %s", connID, conn.RemoteAddr().String())
+
+		p := &TCPProxy{
+			ServerConn:    conn,
+			ServerAddr:    serverTCPAddr,
+			RemoteAddr:    remoteTCPAddr,
+			RemoteTLSConf: rTLS,
+			ErrorState:    false,
+			ErrorSignal:   make(chan bool),
+			prefix:        fmt.Sprintf("Connection #%03d ", connID),
+			showContent:   showContent,
+		}
+		go p.start()
 	}
 }

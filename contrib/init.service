@@ -1,0 +1,72 @@
+#! /bin/sh
+### BEGIN INIT INFO
+# Provides:          tlspxy
+# Required-Start:    $network $named $remote_fs $syslog
+# Required-Stop:     $network $named $remote_fs $syslog
+# Should-Start:      tlspxy
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: tls proxy
+# Description:       A tiny TLS termination proxy
+### END INIT INFO                                                                                                                                          
+
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+DAEMON=/usr/bin/tlspxy
+DAEMON_OPTS=""
+NAME="proxy"
+DESC="tlspxy"
+PIDFILE="/var/run/tlspxy/${NAME}.pid"
+
+test -x $DAEMON || exit 0
+
+[ -r /etc/default/tlspxy ] && . /etc/default/tlspxy
+
+. /lib/lsb/init-functions
+
+reload_tlspxy_agent() {
+	start-stop-daemon --stop --quiet --signal HUP --pidfile $PIDFILE 
+}
+
+start_tlspxy_agent() {
+    start-stop-daemon --start --quiet --pidfile $PIDFILE \
+	--startas $DAEMON -- $NAME $DAEMON_OPTS
+}
+
+stop_tlspxy_agent() {
+	start-stop-daemon --stop --retry TERM/10/KILL/5 --quiet --oknodo --pidfile $PIDFILE
+}
+
+status_tlspxy_agent() {
+	status_of_proc -p "${PIDFILE}" "${DAEMON}" "${NAME}"
+}
+
+case "$1" in
+    start)
+	log_begin_msg "Starting $DESC"
+	start_tlspxy_agent
+	log_end_msg $?
+	;;
+    stop)
+	log_begin_msg "Stopping $DESC"
+	stop_tlspxy_agent
+	log_end_msg $?
+	;;
+    reload)
+    	log_begin_msg "Reloading $DESC"
+        reload_tlspxy_agent
+    	log_end_msg $?
+    	;;
+    status)
+        status_tlspxy_agent
+	;;
+    restart|force-reload)
+	log_begin_msg "Restarting $DESC"
+	stop_tlspxy_agent
+	start_tlspxy_agent
+	log_end_msg $?
+	;;
+  *)
+	echo "Usage: $0 {start|stop|status|restart|force-reload|reload}" >&2
+	exit 1
+	;;
+esac

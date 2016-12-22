@@ -1,4 +1,4 @@
-GO_BIN_NAME = tlspxy
+GO_BIN_NAME = tlspxy_$$(uname -s -m | tr '[:upper:]' '[:lower:]' | tr ' ' '_')
 GO_INSTALL_PATH = /usr/local/sbin/tlspxy
 DOCKER_IMAGE_NAME = elcolio/tlspxy:latest
 
@@ -18,10 +18,8 @@ test:
 
 docker:
 	docker pull golang:latest
-	docker run -it --rm \
-		-v "$$(pwd):/go/src/github.com/colebrumley/tlspxy" \
-		golang:latest bash -c \
-		"cd /go/src/github.com/colebrumley/tlspxy && make && mv bin/tlspxy bin/tlspxy_linux_x64"
+	docker run -it --rm -v "$$(pwd):/go/src/github.com/colebrumley/tlspxy" \
+		golang:latest bash -c "cd /go/src/github.com/colebrumley/tlspxy && make"
 	docker build -t $(DOCKER_IMAGE_NAME) -f contrib/Dockerfile .
 
 deps:

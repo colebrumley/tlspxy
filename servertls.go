@@ -12,28 +12,38 @@ import (
 )
 
 func configServerTLS(inner net.Listener, cfg *config.Config) net.Listener {
+	var tlsConf *tls.Config
+
+	r := inner
+	tlsConf = getServerTLSConfig(cfg)
+
+	if tlsConf != nil {
+		r = tls.NewListener(inner, tlsConf)
+	}
+	return r
+}
+
+func getServerTLSConfig(cfg *config.Config) *tls.Config {
+	var (
+		tlsConf *tls.Config
+		err     error
+	)
 	// Load server TLS config from cert files
 	cert := cfg.UString("server.tls.cert")
 	key := cfg.UString("server.tls.key")
 	ca := cfg.UString("server.tls.ca")
 	useLetsencrypt := cfg.UBool("server.tls.letsencrypt.enable", false)
 
-	var (
-		tlsConf *tls.Config
-		err     error
-	)
-
-	r := inner
-
 	// Check for whether server.tls.letsencrypt.enable is true,
 	// and load a LetsEncrypt cert if so.
 	if useLetsencrypt {
 		log.Debug("Enabling LetsEncrypt on Server connection")
-		m := *getCertManager(
-			cfg.UString("server.tls.letsencrypt.domain"),
-			cfg.UString("server.tls.letsencrypt.cachedir"),
-			cfg.UString("server.tls.letsencrypt.email"),
-		)
+		m := autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(cfg.UString("server.tls.letsencrypt.domain")),
+			Email:      cfg.UString("server.tls.letsencrypt.email"),
+			Cache:      autocert.DirCache(cfg.UString("server.tls.letsencrypt.cachedir")),
+		}
 		tlsConf = &tls.Config{GetCertificate: m.GetCertificate}
 		// See if a cert or key was specified, load a TLS config from it if so
 	} else if len(cert) > 0 || len(key) > 0 {
@@ -60,27 +70,5 @@ func configServerTLS(inner net.Listener, cfg *config.Config) net.Listener {
 		tlsConf.ClientAuth = tls.RequireAndVerifyClientCert
 	}
 
-	if tlsConf != nil {
-		r = tls.NewListener(inner, tlsConf)
-	}
-	return r
-}
-
-func getCertManager(domain, cachepath, email string) *autocert.Manager {
-	m := autocert.Manager{
-		Prompt: autocert.AcceptTOS,
-	}
-
-	if len(domain) > 0 {
-		m.HostPolicy = autocert.HostWhitelist(domain)
-	}
-
-	if len(email) > 0 {
-		m.Email = email
-	}
-
-	if len(cachepath) > 0 {
-		m.Cache = autocert.DirCache(cachepath)
-	}
-	return &m
+	return tlsConf
 }

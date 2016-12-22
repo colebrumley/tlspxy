@@ -10,6 +10,7 @@ var (
 	DefaultConfig = map[string]interface{}{
 		"server": map[string]interface{}{
 			"addr": ":9898",
+			"type": "tcp",
 			"tls": map[string]interface{}{
 				"verify":  false,
 				"require": false,
@@ -26,12 +27,11 @@ var (
 		"remote": map[string]interface{}{
 			"addr": "",
 			"tls": map[string]interface{}{
-				"verify":      false,
-				"passthrough": false,
-				"cert":        "",
-				"key":         "",
-				"ca":          "",
-				"sysroots":    false,
+				"verify":   true,
+				"cert":     "",
+				"key":      "",
+				"ca":       "",
+				"sysroots": true,
 			},
 		},
 		"log": map[string]interface{}{

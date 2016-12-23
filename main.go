@@ -82,21 +82,14 @@ func main() {
 
 	switch cfg.UString("server.type", "tcp") {
 	case "tcp":
-		var (
-			remoteTCPAddr *net.TCPAddr
-		)
 		// Pull remote.addr out of Config and convert to *net.TCPAddr
 		if remoteAddr, err = cfg.String("remote.addr"); err != nil {
 			log.Error("No remote address defined!")
 			os.Exit(1)
 		}
-		if remoteTCPAddr, err = net.ResolveTCPAddr("tcp", remoteAddr); err != nil {
-			log.Error(err)
-			os.Exit(1)
-		}
 		listener := configServerTLS(inner, cfg)
-		log.Infof("Opening proxy from %s to %s", serverTCPAddr.String(), remoteTCPAddr.String())
-		serveTCP(listener, serverTCPAddr, remoteTCPAddr, cfg.UBool("log.contents", false), remoteTLS)
+		log.Infof("Opening proxy from %s to %s", serverAddr, remoteAddr)
+		serveTCP(listener, serverAddr, remoteAddr, cfg.UBool("log.contents", false), remoteTLS)
 	case "http", "https":
 		var (
 			u  *url.URL

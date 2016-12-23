@@ -15,7 +15,7 @@ import (
 type TCPProxy struct {
 	SentBytes              uint64
 	ReceivedBytes          uint64
-	ServerAddr, RemoteAddr *net.TCPAddr
+	ServerAddr, RemoteAddr string
 	ServerConn, RemoteConn net.Conn
 	RemoteTLSConf          *tls.Config
 	ErrorState             bool
@@ -47,11 +47,11 @@ func (p *TCPProxy) start() {
 	if p.RemoteTLSConf != nil {
 		isTLS = true
 		p.RemoteTLSConf.BuildNameToCertificate()
-		log.Debugf("Dialing %s", p.RemoteAddr.String())
-		rConn, err = tls.Dial("tcp", p.RemoteAddr.String(), p.RemoteTLSConf)
+		log.Debugf("Dialing %s", p.RemoteAddr)
+		rConn, err = tls.Dial("tcp", p.RemoteAddr, p.RemoteTLSConf)
 	} else {
 		isTLS = false
-		rConn, err = net.DialTCP("tcp", nil, p.RemoteAddr)
+		rConn, err = net.Dial("tcp", p.RemoteAddr)
 	}
 	if err != nil {
 		p.err("Remote connection failed: %s", err)
@@ -115,7 +115,7 @@ func (p *TCPProxy) pipe(src, dst net.Conn) {
 	}
 }
 
-func serveTCP(listener net.Listener, serverTCPAddr, remoteTCPAddr *net.TCPAddr, showContent bool, rTLS *tls.Config) {
+func serveTCP(listener net.Listener, serverAddr, remoteAddr string, showContent bool, rTLS *tls.Config) {
 	connID := 0
 	for {
 		conn, err := listener.Accept()
@@ -128,8 +128,8 @@ func serveTCP(listener net.Listener, serverTCPAddr, remoteTCPAddr *net.TCPAddr, 
 
 		p := &TCPProxy{
 			ServerConn:    conn,
-			ServerAddr:    serverTCPAddr,
-			RemoteAddr:    remoteTCPAddr,
+			ServerAddr:    serverAddr,
+			RemoteAddr:    remoteAddr,
 			RemoteTLSConf: rTLS,
 			ErrorState:    false,
 			ErrorSignal:   make(chan bool),

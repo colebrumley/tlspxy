@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/imdario/mergo"
 	"github.com/olebedev/config"
 )
 
@@ -62,13 +61,16 @@ func prettyPrintFlagMap(m map[string]interface{}, prefix ...string) {
 	}
 }
 
+// combineConfigs converts n `*config.Config` objects to their underlying
+// `map[string]interface{}` objects so we can recursively combine them with
+// combineMaps.
 func combineConfigs(cfgs ...*config.Config) *config.Config {
-	root := map[string]interface{}{}
+	maps := []map[string]interface{}{}
 	for _, conf := range cfgs {
-		if err := mergo.Merge(&root, conf.Root.(map[string]interface{})); err != nil {
-			log.Error(err)
-		}
+		m := append(maps, conf.Root.(map[string]interface{}))
+		maps = m
 	}
+	root := combineMaps(maps...)
 	return &config.Config{
 		Root: root,
 	}

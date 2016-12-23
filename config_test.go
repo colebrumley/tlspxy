@@ -106,7 +106,7 @@ func Test_combineConfigs(t *testing.T) {
 			wantR: &config.Config{
 				Root: map[string]interface{}{
 					"log": map[string]interface{}{
-						"level": "debug",
+						"level": "error",
 					},
 				},
 			},

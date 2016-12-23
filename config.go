@@ -18,7 +18,7 @@ func getConfig() (cfg *config.Config, err error) {
 		log.Error(err)
 	}
 
-	allConfigs := []*config.Config{}
+	allConfigs := []*config.Config{&config.Config{Root: DefaultConfig}}
 	for _, f := range files {
 		if !isCfgFile(f.Name()) {
 			continue
@@ -31,17 +31,8 @@ func getConfig() (cfg *config.Config, err error) {
 			}
 			allConfigs = append(allConfigs, c)
 		}
-
-		if strings.HasSuffix(f.Name(), ".json") {
-			c, err = config.ParseJsonFile(f.Name())
-			if err != nil {
-				return
-			}
-			allConfigs = append(allConfigs, c)
-		}
 	}
 
-	allConfigs = append(allConfigs, &config.Config{Root: DefaultConfig})
 	cfg = combineConfigs(allConfigs...)
 	return
 }

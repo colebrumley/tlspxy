@@ -43,7 +43,7 @@ func main() {
 		m, _ := cfg.Map("")
 		prettyPrintFlagMap(m)
 		fmt.Println("All options can be set via flags, environment variables, or configuration files.",
-			"\n  -> See http://colebrumley.github.io/tlspxy for details.")
+			"\n  -> See https://github.com/colebrumley/tlspxy/wiki/Configuration for details.")
 	}
 	// Load priority => Files < Env < Flag
 	cfg.Env().Flag()

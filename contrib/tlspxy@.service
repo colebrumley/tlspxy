@@ -13,7 +13,7 @@ EnvironmentFile=-/etc/default/tlspxy-%i
 EnvironmentFile=-/etc/tlspxy/global
 EnvironmentFile=-/etc/tlspxy/%i
 
-ExecStart=/usr/local/sbin/tlspxy
+ExecStart=/usr/sbin/tlspxy
 
 [Install]
 WantedBy=multi-user.target

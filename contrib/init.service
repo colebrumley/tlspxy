@@ -11,7 +11,7 @@
 ### END INIT INFO                                                                                                                                          
 
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-DAEMON=/usr/bin/tlspxy
+DAEMON=/usr/sbin/tlspxy
 DAEMON_OPTS=""
 NAME="proxy"
 DESC="tlspxy"
@@ -20,6 +20,7 @@ PIDFILE="/var/run/tlspxy/${NAME}.pid"
 test -x $DAEMON || exit 0
 
 [ -r /etc/default/tlspxy ] && . /etc/default/tlspxy
+[ -r /etc/sysconfig/tlspxy ] && . /etc/sysconfig/tlspxy
 
 . /lib/lsb/init-functions
 

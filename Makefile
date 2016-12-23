@@ -1,5 +1,5 @@
 GO_REPO = github.com/colebrumley/tlspxy
-GO_INSTALL_PATH = /usr/local/sbin/tlspxy
+GO_INSTALL_PATH = /usr/sbin/tlspxy
 DOCKER_IMAGE_NAME = elcolio/tlspxy:latest
 VERSION = 0.1.0
 COMMIT_ID = $$(git log | head -n 1 | awk '{print $$2}')

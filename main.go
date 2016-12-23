@@ -89,7 +89,29 @@ func main() {
 		}
 		listener := configServerTLS(inner, cfg)
 		log.Infof("Opening proxy from %s to %s", serverAddr, remoteAddr)
-		serveTCP(listener, serverAddr, remoteAddr, cfg.UBool("log.contents", false), remoteTLS)
+		connID := 0
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				log.Errorf("Failed to accept connection '%s'", err)
+				continue
+			}
+			connID++
+			log.Infof("Accepted connection #%v from %s", connID, conn.RemoteAddr().String())
+
+			p := &TCPProxy{
+				ServerConn:    conn,
+				ServerAddr:    serverAddr,
+				RemoteAddr:    remoteAddr,
+				RemoteTLSConf: remoteTLS,
+				ErrorState:    false,
+				ErrorSignal:   make(chan bool),
+				prefix:        fmt.Sprintf("Connection #%03d ", connID),
+				showContent:   cfg.UBool("log.contents", false),
+			}
+			go p.start()
+			shm.AddHandler(p.InterruptHandler, os.Interrupt, os.Kill)
+		}
 	case "http", "https":
 		var (
 			u  *url.URL

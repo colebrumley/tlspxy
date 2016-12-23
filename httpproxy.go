@@ -17,9 +17,7 @@ type ProxyTransport struct {
 
 // InterruptHandler writes info when an os signal is encountered.
 func (t *ProxyTransport) InterruptHandler() {
-	valTo := int(t.bytesTo / 1024)
-	valFrom := int(t.bytesFrom / 1024)
-	log.Infof("HTTP proxy sent %v Kb and received %v Kb", valTo, valFrom)
+	log.Infof("HTTP proxy sent %v bytes and received %v bytes", t.bytesTo, t.bytesFrom)
 }
 
 // RoundTrip invokes the underlying RoundTripper and captures data about the call

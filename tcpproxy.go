@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net"
 
@@ -13,8 +12,8 @@ import (
 // of data sent and received, local and remote server settings, TLS config,
 // and any connection errors.
 type TCPProxy struct {
-	SentBytes              uint64
-	ReceivedBytes          uint64
+	bytesTo                uint64
+	bytesFrom              uint64
 	ServerAddr, RemoteAddr string
 	ServerConn, RemoteConn net.Conn
 	RemoteTLSConf          *tls.Config
@@ -22,6 +21,11 @@ type TCPProxy struct {
 	ErrorSignal            chan bool
 	prefix                 string
 	showContent            bool
+}
+
+// InterruptHandler writes info when an os signal is encountered.
+func (p *TCPProxy) InterruptHandler() {
+	log.Infof("TCP proxy sent %v bytes and received %v bytes", p.bytesTo, p.bytesFrom)
 }
 
 func (p *TCPProxy) err(s string, err error) {
@@ -71,7 +75,7 @@ func (p *TCPProxy) start() {
 	//wait for close...
 	<-p.ErrorSignal
 	log.Infof("%s Closed (%d bytes sent, %d bytes recieved)",
-		p.prefix, p.SentBytes, p.ReceivedBytes)
+		p.prefix, p.bytesTo, p.bytesFrom)
 }
 
 func (p *TCPProxy) pipe(src, dst net.Conn) {
@@ -108,34 +112,9 @@ func (p *TCPProxy) pipe(src, dst net.Conn) {
 			return
 		}
 		if islocal {
-			p.SentBytes += uint64(n)
+			p.bytesTo += uint64(n)
 		} else {
-			p.ReceivedBytes += uint64(n)
+			p.bytesFrom += uint64(n)
 		}
-	}
-}
-
-func serveTCP(listener net.Listener, serverAddr, remoteAddr string, showContent bool, rTLS *tls.Config) {
-	connID := 0
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Errorf("Failed to accept connection '%s'", err)
-			continue
-		}
-		connID++
-		log.Infof("Accepted connection #%v from %s", connID, conn.RemoteAddr().String())
-
-		p := &TCPProxy{
-			ServerConn:    conn,
-			ServerAddr:    serverAddr,
-			RemoteAddr:    remoteAddr,
-			RemoteTLSConf: rTLS,
-			ErrorState:    false,
-			ErrorSignal:   make(chan bool),
-			prefix:        fmt.Sprintf("Connection #%03d ", connID),
-			showContent:   showContent,
-		}
-		go p.start()
 	}
 }

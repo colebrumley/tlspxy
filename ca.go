@@ -28,7 +28,6 @@ func SetSystemCAPool(capool *x509.CertPool) error {
 		"/etc/certs/ca-certificates.crt",         // Solaris 11.2+
 		"/etc/ssl/cacert.pem",                    // OmniOS
 		"/system/etc/security/cacerts",           // Android
-		"/ssl/CA/ca-chain.pem",                   // Enteon digicert chain
 	}
 
 	switch runtime.GOOS {

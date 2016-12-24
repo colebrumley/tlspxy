@@ -47,9 +47,11 @@ func LoadTLSConfigFromFiles(cert, key, ca string, loadSystemRoots bool) (tlsConf
 	caPool = x509.NewCertPool()
 
 	if loadSystemRoots {
-		if err = SetSystemCAPool(caPool); err != nil {
+		var pool *x509.CertPool
+		if pool, err = SetSystemCAPool(caPool); err != nil {
 			return
 		}
+		caPool = pool
 	}
 
 	if len(ca) > 0 {

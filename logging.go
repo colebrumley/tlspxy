@@ -1,13 +1,11 @@
 package main
 
 import (
-	log "github.com/Sirupsen/logrus"
-	syslogrus "github.com/Sirupsen/logrus/hooks/syslog"
-	"github.com/olebedev/config"
-	"io/ioutil"
-	"log/syslog"
 	"os"
 	"strings"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/olebedev/config"
 )
 
 func configLogging(cfg *config.Config) {
@@ -33,14 +31,10 @@ func configLogging(cfg *config.Config) {
 	}
 
 	if strings.HasPrefix(logDest, "syslog://") {
-		addr := strings.TrimPrefix(logDest, "syslog://")
-		hook, err := syslogrus.NewSyslogHook("udp", addr, syslog.LOG_INFO, "tlspxy")
-		if err != nil {
-			log.Error("Unable to connect to local syslog daemon")
-		} else {
-			log.AddHook(hook)
+		if err := syslogging(strings.TrimPrefix(logDest, "syslog://")); err != nil {
+			log.Error(err)
+			os.Exit(1)
 		}
-		log.SetOutput(ioutil.Discard)
 		return
 	}
 

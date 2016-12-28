@@ -4,6 +4,6 @@ import (
 	"fmt"
 )
 
-func syslogging() error {
+func syslogging(addr string) error {
 	return fmt.Errorf("Using syslog from Windows is not supported.")
 }

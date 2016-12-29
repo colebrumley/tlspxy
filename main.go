@@ -89,6 +89,8 @@ func main() {
 		}
 		listener := configServerTLS(inner, cfg)
 		log.Infof("Opening proxy from %s to %s", serverAddr, remoteAddr)
+		ctr := ProxyCounter{}
+		shm.AddHandler(ctr.InterruptHandler, os.Interrupt, os.Kill)
 		connID := 0
 		for {
 			conn, err := listener.Accept()
@@ -100,6 +102,7 @@ func main() {
 			log.Infof("Accepted connection #%v from %s", connID, conn.RemoteAddr().String())
 
 			p := &TCPProxy{
+				Counter:       &ctr,
 				ServerConn:    conn,
 				ServerAddr:    serverAddr,
 				RemoteAddr:    remoteAddr,
@@ -110,7 +113,6 @@ func main() {
 				showContent:   cfg.UBool("log.contents", false),
 			}
 			go p.start()
-			shm.AddHandler(p.InterruptHandler, os.Interrupt, os.Kill)
 		}
 	case "http", "https":
 		var (

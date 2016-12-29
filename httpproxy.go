@@ -24,14 +24,17 @@ func (t *ProxyTransport) InterruptHandler() {
 // on its way back to the client.
 func (t *ProxyTransport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
 	log.Debugf("Calling: %s", req.URL.String())
-	toTot := t.bytesTo + req.ContentLength
+	cl, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		return
+	}
+	toTot := t.bytesTo + int64(len(cl))
 	t.bytesTo = toTot
 	resp, err = t.RoundTripper.RoundTrip(req)
 	if err != nil {
 		resp = nil
 		return
 	}
-	log.Debugf("Response: code=%v content-length=%v content-type=%v", resp.StatusCode, resp.ContentLength, resp.Header["Content-Type"])
 	b, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		resp = nil
@@ -42,6 +45,8 @@ func (t *ProxyTransport) RoundTrip(req *http.Request) (resp *http.Response, err 
 		resp = nil
 		return
 	}
+	log.Debugf("Response: code=%v content-length=%v content-type=%v", resp.StatusCode, len(b), resp.Header["Content-Type"])
+
 	// b = bytes.Replace(b, []byte("costume"), []byte("oversize novelty pantaloons"), -1)
 	body := ioutil.NopCloser(bytes.NewReader(b))
 	if t.ShowContent {

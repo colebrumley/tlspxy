@@ -8,12 +8,41 @@ import (
 	log "github.com/Sirupsen/logrus"
 )
 
+// ProxyCounter counts the proxy's traffic
+type ProxyCounter struct {
+	to, from uint64
+}
+
+// To adds bytes to the to counter
+func (p *ProxyCounter) To(b uint64) {
+	tot := p.to + b
+	p.to = tot
+}
+
+// From adds bytes to the from counter
+func (p *ProxyCounter) From(b uint64) {
+	tot := p.from + b
+	p.from = tot
+}
+
+// Total returns the count
+func (p *ProxyCounter) Total() (to, from uint64) {
+	to = p.to
+	from = p.from
+	return
+}
+
+// InterruptHandler writes info when an os signal is encountered.
+func (p *ProxyCounter) InterruptHandler() {
+	to, from := p.Total()
+	log.Infof("TCP proxy sent %v bytes and received %v bytes", to, from)
+}
+
 // TCPProxy is the wrapper object for a proxy connection. It tracks the amount
 // of data sent and received, local and remote server settings, TLS config,
 // and any connection errors.
 type TCPProxy struct {
-	bytesTo                uint64
-	bytesFrom              uint64
+	Counter                *ProxyCounter
 	ServerAddr, RemoteAddr string
 	ServerConn, RemoteConn net.Conn
 	RemoteTLSConf          *tls.Config
@@ -21,11 +50,6 @@ type TCPProxy struct {
 	ErrorSignal            chan bool
 	prefix                 string
 	showContent            bool
-}
-
-// InterruptHandler writes info when an os signal is encountered.
-func (p *TCPProxy) InterruptHandler() {
-	log.Infof("TCP proxy sent %v bytes and received %v bytes", p.bytesTo, p.bytesFrom)
 }
 
 func (p *TCPProxy) err(s string, err error) {
@@ -74,8 +98,7 @@ func (p *TCPProxy) start() {
 	go p.pipe(p.RemoteConn, p.ServerConn)
 	//wait for close...
 	<-p.ErrorSignal
-	log.Infof("%s Closed (%d bytes sent, %d bytes recieved)",
-		p.prefix, p.bytesTo, p.bytesFrom)
+	log.Infof("%s Closed", p.prefix)
 }
 
 func (p *TCPProxy) pipe(src, dst net.Conn) {
@@ -112,9 +135,9 @@ func (p *TCPProxy) pipe(src, dst net.Conn) {
 			return
 		}
 		if islocal {
-			p.bytesTo += uint64(n)
+			p.Counter.To(uint64(n))
 		} else {
-			p.bytesFrom += uint64(n)
+			p.Counter.From(uint64(n))
 		}
 	}
 }

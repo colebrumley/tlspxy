@@ -18,7 +18,7 @@ func getConfig() (cfg *config.Config, err error) {
 		log.Error(err)
 	}
 
-	allConfigs := []*config.Config{&config.Config{Root: DefaultConfig}}
+	allConfigs := []*config.Config{{Root: DefaultConfig}}
 	for _, f := range files {
 		if !isCfgFile(f.Name()) {
 			continue

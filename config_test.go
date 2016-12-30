@@ -55,14 +55,14 @@ func Test_combineConfigs(t *testing.T) {
 		{
 			name: "Combine non-overlapping configs",
 			args: args{cfgs: []*config.Config{
-				&config.Config{
+				{
 					Root: map[string]interface{}{
 						"log": map[string]interface{}{
 							"level": "debug",
 						},
 					},
 				},
-				&config.Config{
+				{
 					Root: map[string]interface{}{
 						"remote": map[string]interface{}{
 							"addr": "google.com:443",
@@ -88,14 +88,14 @@ func Test_combineConfigs(t *testing.T) {
 		{
 			name: "Combine overlapping configs",
 			args: args{cfgs: []*config.Config{
-				&config.Config{
+				{
 					Root: map[string]interface{}{
 						"log": map[string]interface{}{
 							"level": "debug",
 						},
 					},
 				},
-				&config.Config{
+				{
 					Root: map[string]interface{}{
 						"log": map[string]interface{}{
 							"level": "error",

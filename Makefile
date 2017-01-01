@@ -25,7 +25,7 @@ install: build
 	mv bin/$(GO_BIN_NAME) $(GO_INSTALL_PATH)
 
 test:
-	go test -v
+	go test -v -bench=.
 
 docker:
 	docker pull golang:latest

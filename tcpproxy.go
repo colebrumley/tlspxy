@@ -108,7 +108,7 @@ func (p *TCPProxy) pipe(src, dst net.Conn) {
 	if islocal {
 		f = p.prefix + " >>> %d bytes sent%s"
 	} else {
-		f = p.prefix + " <<< %d bytes recieved%s"
+		f = p.prefix + " <<< %d bytes received%s"
 	}
 
 	//directional copy (64k buffer)

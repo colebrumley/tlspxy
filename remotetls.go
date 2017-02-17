@@ -26,17 +26,29 @@ func configRemoteTLS(cfg *config.Config) (tlsConf *tls.Config, err error) {
 		err = nil
 	}
 
-	if doVerify || useSysRoots {
+	if doVerify && useSysRoots {
+		var capool *x509.CertPool
 		// Just load system CAs
 		log.Debugf("Loading default remote TLS config [verify: %v, system roots: %v]", doVerify, useSysRoots)
-		capool := x509.NewCertPool()
-		SetSystemCAPool(capool)
 		if tlsConf == nil {
+			capool = x509.NewCertPool()
+			capool, err = SetSystemCAPool(capool)
+			if err != nil {
+				return
+			}
 			tlsConf = &tls.Config{
 				RootCAs:   capool,
 				ClientCAs: capool,
 			}
 		} else {
+			capool, err = SetSystemCAPool(tlsConf.RootCAs)
+			if err != nil {
+				return
+			}
+			capool, err = SetSystemCAPool(tlsConf.ClientCAs)
+			if err != nil {
+				return
+			}
 			tlsConf.RootCAs = capool
 			tlsConf.ClientCAs = capool
 		}

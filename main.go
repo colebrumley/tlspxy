@@ -48,12 +48,14 @@ func main() {
 	// Load priority => Files < Env < Flag
 	cfg.Env().Flag()
 
+	// Create the SigHandlerMux and configure logging
 	shm = &SigHandlerMux{
 		do: map[os.Signal][]func(){},
 	}
 	go shm.WatchForSignals()
 	configLogging(cfg)
 
+	// Print the loaded config if debug is on
 	c, _ := config.RenderYaml(cfg.Root)
 	log.Debugln("Loaded config:\n", c)
 
@@ -73,6 +75,9 @@ func main() {
 		log.Error(err)
 	}
 
+	// Configure the server's TLS settings
+	listener := configServerTLS(inner, cfg)
+
 	// Load the remote config. This will depend on what kind of listener
 	// we have configured.
 	if remoteTLS, err = configRemoteTLS(cfg); err != nil {
@@ -87,7 +92,6 @@ func main() {
 			log.Error("No remote address defined!")
 			os.Exit(1)
 		}
-		listener := configServerTLS(inner, cfg)
 		log.Infof("Opening proxy from %s to %s", serverAddr, remoteAddr)
 		ctr := ProxyCounter{}
 		shm.AddHandler(ctr.InterruptHandler, os.Interrupt, os.Kill)
@@ -146,7 +150,7 @@ func main() {
 		proxy := &ProxyTransport{
 			ShowContent: cfg.UBool("log.contents", false),
 			RoundTripper: &http.Transport{
-				TLSClientConfig: getServerTLSConfig(cfg),
+				TLSClientConfig: remoteTLS,
 			},
 		}
 		shm.AddHandler(proxy.InterruptHandler, os.Interrupt, os.Kill)
@@ -156,7 +160,7 @@ func main() {
 			Transport: proxy,
 		}
 		log.Infof("Opening proxy from %s to %s", serverTCPAddr.String(), u.String())
-		http.Serve(inner, rp)
+		http.Serve(listener, rp)
 	default:
 		log.Errorln("Unknown server type requested!")
 		os.Exit(1)

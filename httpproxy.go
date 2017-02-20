@@ -24,12 +24,14 @@ func (t *ProxyTransport) InterruptHandler() {
 // on its way back to the client.
 func (t *ProxyTransport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
 	log.Debugf("Calling: %s", req.URL.String())
-	cl, err := ioutil.ReadAll(req.Body)
-	if err != nil {
-		return
+	if req.Body != nil {
+		cl, err := ioutil.ReadAll(req.Body)
+		if err != nil {
+			log.Errorf("%v", err)
+		}
+		toTot := t.bytesTo + int64(len(cl))
+		t.bytesTo = toTot
 	}
-	toTot := t.bytesTo + int64(len(cl))
-	t.bytesTo = toTot
 	resp, err = t.RoundTripper.RoundTrip(req)
 	if err != nil {
 		resp = nil

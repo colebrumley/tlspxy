@@ -27,6 +27,7 @@ var (
 		"remote": map[string]interface{}{
 			"addr": "",
 			"tls": map[string]interface{}{
+				"enable":   true,
 				"verify":   true,
 				"cert":     "",
 				"key":      "",

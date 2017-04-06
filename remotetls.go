@@ -9,6 +9,7 @@ import (
 )
 
 func configRemoteTLS(cfg *config.Config) (tlsConf *tls.Config, err error) {
+	isTLS := cfg.UBool("remote.tls.enable", true)
 	cert := cfg.UString("remote.tls.cert")
 	key := cfg.UString("remote.tls.key")
 	ca := cfg.UString("remote.tls.ca")
@@ -21,9 +22,8 @@ func configRemoteTLS(cfg *config.Config) (tlsConf *tls.Config, err error) {
 			return
 		}
 		log.Debugln("Loading remote TLS config succeeded")
-	} else {
-		tlsConf = nil
-		err = nil
+	} else if isTLS {
+		tlsConf = &tls.Config{}
 	}
 
 	if doVerify && useSysRoots {

@@ -35,8 +35,8 @@ docker:
 
 deps:
 	command -v glide || go get github.com/Masterminds/glide
-	glide update
-	glide install
+	$$GOPATH/bin/glide update
+	$$GOPATH/bin/glide install
 
 clean:
 	rm -Rf vendor/ glide.lock tlspxy bin/

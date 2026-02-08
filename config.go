@@ -4,36 +4,98 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/olebedev/config"
 )
 
-func getConfig() (cfg *config.Config, err error) {
-	dirname, _ := os.Getwd()
-	files, err := os.ReadDir(dirname)
-	if err != nil {
-		log.Error(err)
-	}
-
-	allConfigs := []*config.Config{{Root: DefaultConfig}}
-	for _, f := range files {
-		if !isCfgFile(f.Name()) {
-			continue
-		}
-		var c *config.Config
-		if strings.HasSuffix(f.Name(), ".yml") || strings.HasSuffix(f.Name(), ".yaml") {
-			c, err = config.ParseYamlFile(f.Name())
-			if err != nil {
-				return
+// parseConfigPaths extracts -config values from raw args before flag.Parse runs.
+func parseConfigPaths(args []string) []string {
+	var paths []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "-config" || arg == "--config" {
+			if i+1 < len(args) {
+				i++
+				paths = append(paths, args[i])
 			}
-			allConfigs = append(allConfigs, c)
+		} else if strings.HasPrefix(arg, "-config=") {
+			paths = append(paths, strings.TrimPrefix(arg, "-config="))
+		} else if strings.HasPrefix(arg, "--config=") {
+			paths = append(paths, strings.TrimPrefix(arg, "--config="))
+		}
+	}
+	return paths
+}
+
+func getConfig(extraPaths ...string) (cfg *config.Config, err error) {
+	allConfigs := []*config.Config{{Root: DefaultConfig}}
+
+	// Load config files from the current working directory
+	dirname, _ := os.Getwd()
+	cwdConfigs, err := loadConfigsFromDir(dirname)
+	if err != nil {
+		log.Warningf("Failed to read config from working directory: %v", err)
+	}
+	allConfigs = append(allConfigs, cwdConfigs...)
+
+	// Load config files from extra paths specified via -config flag
+	for _, p := range extraPaths {
+		info, statErr := os.Stat(p)
+		if statErr != nil {
+			return nil, fmt.Errorf("config path %q: %w", p, statErr)
+		}
+		if info.IsDir() {
+			dirConfigs, dirErr := loadConfigsFromDir(p)
+			if dirErr != nil {
+				return nil, fmt.Errorf("config dir %q: %w", p, dirErr)
+			}
+			allConfigs = append(allConfigs, dirConfigs...)
+		} else {
+			c, fileErr := loadConfigFile(p)
+			if fileErr != nil {
+				return nil, fmt.Errorf("config file %q: %w", p, fileErr)
+			}
+			if c != nil {
+				allConfigs = append(allConfigs, c)
+			}
 		}
 	}
 
 	cfg = combineConfigs(allConfigs...)
 	return
+}
+
+func loadConfigsFromDir(dirname string) ([]*config.Config, error) {
+	files, err := os.ReadDir(dirname)
+	if err != nil {
+		return nil, err
+	}
+
+	var configs []*config.Config
+	for _, f := range files {
+		path := filepath.Join(dirname, f.Name())
+		if !isCfgFile(path) {
+			continue
+		}
+		c, err := loadConfigFile(path)
+		if err != nil {
+			return nil, err
+		}
+		if c != nil {
+			configs = append(configs, c)
+		}
+	}
+	return configs, nil
+}
+
+func loadConfigFile(path string) (*config.Config, error) {
+	if strings.HasSuffix(path, ".yml") || strings.HasSuffix(path, ".yaml") {
+		return config.ParseYamlFile(path)
+	}
+	return nil, nil
 }
 
 func prettyPrintFlagMap(m map[string]interface{}, prefix ...string) {

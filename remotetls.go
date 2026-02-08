@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/olebedev/config"
@@ -26,32 +25,15 @@ func configRemoteTLS(cfg *config.Config) (tlsConf *tls.Config, err error) {
 		tlsConf = &tls.Config{}
 	}
 
-	if doVerify && useSysRoots {
-		var capool *x509.CertPool
-		// Just load system CAs
+	if doVerify && useSysRoots && tlsConf != nil {
 		log.Debugf("Loading default remote TLS config [verify: %v, system roots: %v]", doVerify, useSysRoots)
-		if tlsConf == nil {
-			capool = x509.NewCertPool()
-			capool, err = SetSystemCAPool(capool)
-			if err != nil {
-				return
-			}
-			tlsConf = &tls.Config{
-				RootCAs:   capool,
-				ClientCAs: capool,
-			}
-		} else {
-			capool, err = SetSystemCAPool(tlsConf.RootCAs)
-			if err != nil {
-				return
-			}
-			capool, err = SetSystemCAPool(tlsConf.ClientCAs)
-			if err != nil {
-				return
-			}
-			tlsConf.RootCAs = capool
-			tlsConf.ClientCAs = capool
+		capool, poolErr := SystemCAPool()
+		if poolErr != nil {
+			err = poolErr
+			return
 		}
+		tlsConf.RootCAs = capool
+		tlsConf.ClientCAs = capool
 	}
 
 	if !doVerify && tlsConf != nil {

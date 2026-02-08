@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -148,7 +150,8 @@ func TestIntegration_PlaintextPassthrough(t *testing.T) {
 			ServerAddr:  proxyAddr,
 			RemoteAddr:  echoAddr,
 			ErrorSignal: make(chan bool, 1),
-			prefix:      "test ",
+			connID:      1,
+			log:         log.WithFields(log.Fields{"component": "tcp", "conn": 1}),
 		}
 		p.start()
 	}()
@@ -244,7 +247,8 @@ func TestIntegration_TLSTermination_TCP(t *testing.T) {
 			ServerAddr:  proxyAddr,
 			RemoteAddr:  echoAddr,
 			ErrorSignal: make(chan bool, 1),
-			prefix:      "tls-test ",
+			connID:      1,
+			log:         log.WithFields(log.Fields{"component": "tcp", "conn": 1}),
 		}
 		// No RemoteTLSConf — backend is plain TCP
 		p.start()
@@ -509,7 +513,8 @@ func TestIntegration_TLSBothSides(t *testing.T) {
 			RemoteAddr:    echoAddr,
 			RemoteTLSConf: remoteTLSConf,
 			ErrorSignal:   make(chan bool, 1),
-			prefix:        "tls-both-test ",
+			connID:        1,
+			log:           log.WithFields(log.Fields{"component": "tcp", "conn": 1}),
 		}
 		p.start()
 	}()

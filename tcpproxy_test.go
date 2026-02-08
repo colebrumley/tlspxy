@@ -10,7 +10,13 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
+
+func testLog() *log.Entry {
+	return log.WithFields(log.Fields{"component": "tcp", "conn": 0})
+}
 
 func TestProxyCounter_Concurrent(t *testing.T) {
 	counter := &ProxyCounter{}
@@ -83,6 +89,7 @@ func TestTCPProxy_Pipe(t *testing.T) {
 		RemoteConn:  remoteProxy,
 		ErrorSignal: make(chan bool, 1),
 		closeOnce:   sync.Once{},
+		log:         testLog(),
 	}
 
 	// Start piping in both directions
@@ -177,6 +184,7 @@ func TestTCPProxy_ErrorHandling(t *testing.T) {
 		RemoteConn:  remoteProxy,
 		ErrorSignal: errSignal,
 		closeOnce:   sync.Once{},
+		log:         testLog(),
 	}
 
 	// Start piping
@@ -222,6 +230,7 @@ func TestTCPProxy_DialTimeout(t *testing.T) {
 		ServerConn:  serverProxy,
 		ErrorSignal: errSignal,
 		closeOnce:   sync.Once{},
+		log:         testLog(),
 	}
 
 	go proxy.start()
@@ -287,6 +296,7 @@ func TestTCPProxy_Start_HappyPath(t *testing.T) {
 		ServerConn:  serverProxy,
 		ErrorSignal: errSignal,
 		closeOnce:   sync.Once{},
+		log:         testLog(),
 	}
 
 	// start() blocks on ErrorSignal internally, so track when it returns
@@ -352,6 +362,7 @@ func TestTCPProxy_Start_RemoteRefused(t *testing.T) {
 		ServerConn:  serverProxy,
 		ErrorSignal: errSignal,
 		closeOnce:   sync.Once{},
+		log:         testLog(),
 	}
 
 	go proxy.start()
@@ -418,6 +429,7 @@ func TestTCPProxy_Start_WithTLS(t *testing.T) {
 		},
 		ErrorSignal: errSignal,
 		closeOnce:   sync.Once{},
+		log:         testLog(),
 	}
 
 	// start() blocks on ErrorSignal internally, so track when it returns
@@ -476,6 +488,7 @@ func TestTCPProxy_Pipe_WriteFail(t *testing.T) {
 		RemoteConn:  remoteProxy,
 		ErrorSignal: errSignal,
 		closeOnce:   sync.Once{},
+		log:         testLog(),
 	}
 
 	// Close the remote end so that writes to remoteProxy will fail

@@ -38,20 +38,26 @@ func (c *countingReadCloser) Close() error {
 	return err
 }
 
+var httpLog = log.WithField("component", "http")
+
 // InterruptHandler writes info when an os signal is encountered.
 func (t *ProxyTransport) InterruptHandler() {
-	log.Infof("HTTP proxy sent %v bytes and received %v bytes",
-		atomic.LoadInt64(&t.bytesTo), atomic.LoadInt64(&t.bytesFrom))
+	httpLog.WithFields(log.Fields{
+		"sent":     atomic.LoadInt64(&t.bytesTo),
+		"received": atomic.LoadInt64(&t.bytesFrom),
+	}).Info("Proxy shutting down")
 }
 
 // RoundTrip invokes the underlying RoundTripper and captures data about the call
 // on its way back to the client.
 func (t *ProxyTransport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
-	log.Debugf("Calling: %s", req.URL.String())
+	entry := httpLog.WithField("url", req.URL.String())
+	entry.Debug("Calling remote")
+
 	if req.Body != nil {
 		cl, err := io.ReadAll(req.Body)
 		if err != nil {
-			log.Errorf("%v", err)
+			entry.Errorf("Failed to read request body: %v", err)
 		}
 		atomic.AddInt64(&t.bytesTo, int64(len(cl)))
 		req.Body = io.NopCloser(bytes.NewReader(cl))
@@ -61,6 +67,11 @@ func (t *ProxyTransport) RoundTrip(req *http.Request) (resp *http.Response, err 
 		resp = nil
 		return
 	}
+
+	respEntry := entry.WithFields(log.Fields{
+		"status":       resp.StatusCode,
+		"content_type": resp.Header.Get("Content-Type"),
+	})
 
 	if t.ShowContent {
 		b, err := io.ReadAll(resp.Body)
@@ -73,12 +84,12 @@ func (t *ProxyTransport) RoundTrip(req *http.Request) (resp *http.Response, err 
 			resp = nil
 			return resp, err
 		}
-		log.Debugf("Response: code=%v content-length=%v content-type=%v", resp.StatusCode, len(b), resp.Header["Content-Type"])
-		log.Debugf("Content: %s", string(b))
+		respEntry.WithField("bytes", len(b)).Debug("Response received")
+		respEntry.Debugf("Content: %s", string(b))
 		atomic.AddInt64(&t.bytesFrom, int64(len(b)))
 		resp.Body = io.NopCloser(bytes.NewReader(b))
 	} else {
-		log.Debugf("Response: code=%v content-type=%v", resp.StatusCode, resp.Header["Content-Type"])
+		respEntry.Debug("Response received")
 		resp.Body = &countingReadCloser{
 			ReadCloser: resp.Body,
 			onClose: func(n int64) {

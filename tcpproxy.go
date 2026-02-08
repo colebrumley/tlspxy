@@ -36,7 +36,11 @@ func (p *ProxyCounter) Total() (to, from uint64) {
 // InterruptHandler writes info when an os signal is encountered.
 func (p *ProxyCounter) InterruptHandler() {
 	to, from := p.Total()
-	log.Infof("TCP proxy sent %v bytes and received %v bytes", to, from)
+	log.WithFields(log.Fields{
+		"component": "tcp",
+		"sent":      to,
+		"received":  from,
+	}).Info("Proxy shutting down")
 }
 
 // TCPProxy is the wrapper object for a proxy connection. It tracks the amount
@@ -49,20 +53,20 @@ type TCPProxy struct {
 	RemoteTLSConf          *tls.Config
 	ErrorSignal            chan bool
 	closeOnce              sync.Once
-	prefix                 string
+	connID                 int
 	showContent            bool
+	log                    *log.Entry
 }
 
 func (p *TCPProxy) err(s string, err error) {
 	if err != io.EOF {
-		log.Warningf(p.prefix+s, err)
+		p.log.Warningf(s, err)
 	}
 	p.closeOnce.Do(func() { p.ErrorSignal <- true })
 }
 
 func (p *TCPProxy) start() {
 	defer p.ServerConn.Close()
-	//connect to remote
 	var (
 		rConn net.Conn
 		err   error
@@ -71,7 +75,7 @@ func (p *TCPProxy) start() {
 
 	if p.RemoteTLSConf != nil {
 		isTLS = true
-		log.Debugf("Dialing %s", p.RemoteAddr)
+		p.log.Debug("Dialing remote")
 		rConn, err = tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", p.RemoteAddr, p.RemoteTLSConf)
 	} else {
 		isTLS = false
@@ -84,30 +88,25 @@ func (p *TCPProxy) start() {
 	p.RemoteConn = rConn
 	defer p.RemoteConn.Close()
 
-	// Log info about both ends of the conn
-	log.Infof("%sOpened connection %s >>> %s TLS=%v", p.prefix,
-		p.ServerConn.RemoteAddr().String(),
-		p.RemoteConn.RemoteAddr().String(), isTLS)
+	p.log.WithFields(log.Fields{
+		"src": p.ServerConn.RemoteAddr().String(),
+		"dst": p.RemoteConn.RemoteAddr().String(),
+		"tls": isTLS,
+	}).Info("Connection opened")
 
-	//bidirectional copy in separate goroutines
 	go p.pipe(p.ServerConn, p.RemoteConn)
 	go p.pipe(p.RemoteConn, p.ServerConn)
-	//wait for close...
 	<-p.ErrorSignal
-	log.Infof("%s Closed", p.prefix)
+	p.log.Info("Connection closed")
 }
 
 func (p *TCPProxy) pipe(src, dst net.Conn) {
-	//data direction
-	var f string
 	islocal := src == p.ServerConn
+	direction := "recv"
 	if islocal {
-		f = p.prefix + " >>> %d bytes sent%s"
-	} else {
-		f = p.prefix + " <<< %d bytes received%s"
+		direction = "send"
 	}
 
-	//directional copy (64k buffer)
 	buff := make([]byte, 0xffff)
 	for {
 		n, err := src.Read(buff)
@@ -117,14 +116,16 @@ func (p *TCPProxy) pipe(src, dst net.Conn) {
 		}
 		b := buff[:n]
 
-		//show output if necessary
+		entry := p.log.WithFields(log.Fields{
+			"direction": direction,
+			"bytes":     n,
+		})
 		if p.showContent {
-			log.Debugf(f, n, "\n"+string(b))
+			entry.Debugf("%s", string(b))
 		} else {
-			log.Debugf(f, n, "")
+			entry.Debug("Data transferred")
 		}
 
-		//write out result
 		n, err = dst.Write(b)
 		if err != nil {
 			p.err("Write failed '%s'", err)

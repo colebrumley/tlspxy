@@ -33,7 +33,12 @@ func main() {
 		shm                    *SigHandlerMux
 	)
 
-	cfg, err = getConfig()
+	// Pre-parse -config flags from os.Args before loading config.
+	// This allows specifying config files/dirs that are loaded
+	// before env vars and other flags override them.
+	configPaths := parseConfigPaths(os.Args[1:])
+
+	cfg, err = getConfig(configPaths...)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -105,7 +110,11 @@ func main() {
 				continue
 			}
 			connID++
-			log.Infof("Accepted connection #%v from %s", connID, conn.RemoteAddr().String())
+			connLog := log.WithFields(log.Fields{
+				"component": "tcp",
+				"conn":      connID,
+			})
+			connLog.WithField("src", conn.RemoteAddr().String()).Info("Accepted connection")
 
 			p := &TCPProxy{
 				Counter:       &ctr,
@@ -114,8 +123,9 @@ func main() {
 				RemoteAddr:    remoteAddr,
 				RemoteTLSConf: remoteTLS,
 				ErrorSignal:   make(chan bool),
-				prefix:        fmt.Sprintf("Connection #%03d ", connID),
+				connID:        connID,
 				showContent:   cfg.UBool("log.contents", false),
+				log:           connLog,
 			}
 			go p.start()
 		}
@@ -150,7 +160,10 @@ func main() {
 				// explicitly disable User-Agent so it's not set to default value
 				req.Header.Set("User-Agent", "")
 			}
-			log.Debugf("Rewrote request URL %s to %s", oldURL, req.URL.String())
+			httpLog.WithFields(log.Fields{
+				"from": oldURL,
+				"to":   req.URL.String(),
+			}).Debug("Rewrote request URL")
 		}
 
 		proxy := &ProxyTransport{

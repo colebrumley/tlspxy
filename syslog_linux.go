@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log/syslog"
 
-	log "github.com/Sirupsen/logrus"
-	syslogrus "github.com/Sirupsen/logrus/hooks/syslog"
+	log "github.com/sirupsen/logrus"
+	syslogrus "github.com/sirupsen/logrus/hooks/syslog"
 )
 
 func syslogging(addr string) error {
@@ -16,6 +16,6 @@ func syslogging(addr string) error {
 	} else {
 		log.AddHook(hook)
 	}
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	return nil
 }

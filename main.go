@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
@@ -9,8 +10,10 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"syscall"
+	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"github.com/olebedev/config"
 )
 
@@ -33,7 +36,6 @@ func main() {
 	cfg, err = getConfig()
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(1)
 	}
 	flag.Usage = func() {
 		fmt.Println("Version:       ", AppVersion, "| Commit", CommitID)
@@ -94,7 +96,7 @@ func main() {
 		}
 		log.Infof("Opening proxy from %s to %s", serverAddr, remoteAddr)
 		ctr := ProxyCounter{}
-		shm.AddHandler(ctr.InterruptHandler, os.Interrupt, os.Kill)
+		shm.AddHandler(ctr.InterruptHandler, os.Interrupt, syscall.SIGTERM)
 		connID := 0
 		for {
 			conn, err := listener.Accept()
@@ -111,7 +113,6 @@ func main() {
 				ServerAddr:    serverAddr,
 				RemoteAddr:    remoteAddr,
 				RemoteTLSConf: remoteTLS,
-				ErrorState:    false,
 				ErrorSignal:   make(chan bool),
 				prefix:        fmt.Sprintf("Connection #%03d ", connID),
 				showContent:   cfg.UBool("log.contents", false),
@@ -127,14 +128,19 @@ func main() {
 			log.Error(err)
 		}
 
-		myIP := GetOutboundIP()
 		director := func(req *http.Request) {
 			oldURL := req.URL.String()
 			req.Host = u.Host
 			req.URL.Scheme = u.Scheme
 			req.URL.Host = u.Host
 			req.URL.Path = singleJoiningSlash(u.Path, req.URL.Path)
-			req.RemoteAddr = myIP
+			if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+				if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
+					clientIP = prior + ", " + clientIP
+				}
+				req.Header.Set("X-Forwarded-For", clientIP)
+				req.Header.Set("X-Real-IP", clientIP)
+			}
 			if u.RawQuery == "" || req.URL.RawQuery == "" {
 				req.URL.RawQuery = u.RawQuery + req.URL.RawQuery
 			} else {
@@ -153,14 +159,23 @@ func main() {
 				TLSClientConfig: remoteTLS,
 			},
 		}
-		shm.AddHandler(proxy.InterruptHandler, os.Interrupt, os.Kill)
+		shm.AddHandler(proxy.InterruptHandler, os.Interrupt, syscall.SIGTERM)
 
 		rp = &httputil.ReverseProxy{
 			Director:  director,
 			Transport: proxy,
 		}
+		srv := &http.Server{Handler: rp}
+		shm.AddHandler(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			srv.Shutdown(ctx)
+		}, os.Interrupt, syscall.SIGTERM)
+
 		log.Infof("Opening proxy from %s to %s", serverTCPAddr.String(), u.String())
-		http.Serve(listener, rp)
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
 	default:
 		log.Errorln("Unknown server type requested!")
 		os.Exit(1)

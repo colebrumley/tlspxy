@@ -4,8 +4,9 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 // SigHandlerMux watches for kill signals and then executes
@@ -26,7 +27,7 @@ func (shm *SigHandlerMux) AddHandler(fn func(), sigs ...os.Signal) {
 // cleanup callbacks before exiting.
 func (shm *SigHandlerMux) WatchForSignals() {
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, os.Kill)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	for {
 		select {
 		case s := <-signals:

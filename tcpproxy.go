@@ -4,8 +4,11 @@ import (
 	"crypto/tls"
 	"io"
 	"net"
+	"sync"
+	"sync/atomic"
+	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 // ProxyCounter counts the proxy's traffic
@@ -15,20 +18,18 @@ type ProxyCounter struct {
 
 // To adds bytes to the to counter
 func (p *ProxyCounter) To(b uint64) {
-	tot := p.to + b
-	p.to = tot
+	atomic.AddUint64(&p.to, b)
 }
 
 // From adds bytes to the from counter
 func (p *ProxyCounter) From(b uint64) {
-	tot := p.from + b
-	p.from = tot
+	atomic.AddUint64(&p.from, b)
 }
 
 // Total returns the count
 func (p *ProxyCounter) Total() (to, from uint64) {
-	to = p.to
-	from = p.from
+	to = atomic.LoadUint64(&p.to)
+	from = atomic.LoadUint64(&p.from)
 	return
 }
 
@@ -46,21 +47,17 @@ type TCPProxy struct {
 	ServerAddr, RemoteAddr string
 	ServerConn, RemoteConn net.Conn
 	RemoteTLSConf          *tls.Config
-	ErrorState             bool
 	ErrorSignal            chan bool
+	closeOnce              sync.Once
 	prefix                 string
 	showContent            bool
 }
 
 func (p *TCPProxy) err(s string, err error) {
-	if p.ErrorState {
-		return
-	}
 	if err != io.EOF {
 		log.Warningf(p.prefix+s, err)
 	}
-	p.ErrorSignal <- true
-	p.ErrorState = true
+	p.closeOnce.Do(func() { p.ErrorSignal <- true })
 }
 
 func (p *TCPProxy) start() {
@@ -74,12 +71,11 @@ func (p *TCPProxy) start() {
 
 	if p.RemoteTLSConf != nil {
 		isTLS = true
-		p.RemoteTLSConf.BuildNameToCertificate()
 		log.Debugf("Dialing %s", p.RemoteAddr)
-		rConn, err = tls.Dial("tcp", p.RemoteAddr, p.RemoteTLSConf)
+		rConn, err = tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", p.RemoteAddr, p.RemoteTLSConf)
 	} else {
 		isTLS = false
-		rConn, err = net.Dial("tcp", p.RemoteAddr)
+		rConn, err = net.DialTimeout("tcp", p.RemoteAddr, 30*time.Second)
 	}
 	if err != nil {
 		p.err("Remote connection failed: %s", err)

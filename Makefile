@@ -16,8 +16,8 @@ EXTRAFLAGS=-x -v -a -installsuffix cgo
 dist: deps build
 
 build:
-	mkdir bin; \
-	export CGO_ENABLED=0 GO15VENDOREXPERIMENT=1; \
+	mkdir -p bin; \
+	export CGO_ENABLED=0; \
 	go build $(LDFLAGS) $(EXTRAFLAGS) -o bin/$(GO_BIN_NAME)
 
 install: build
@@ -34,9 +34,7 @@ docker:
 	docker build -t $(DOCKER_IMAGE_NAME) -f contrib/Dockerfile .
 
 deps:
-	command -v glide || go get github.com/Masterminds/glide
-	$$GOPATH/bin/glide update
-	$$GOPATH/bin/glide install
+	go mod tidy
 
 clean:
-	rm -Rf vendor/ glide.lock tlspxy bin/
+	rm -Rf tlspxy bin/

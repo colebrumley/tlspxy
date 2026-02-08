@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/crypto/acme/autocert"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"github.com/olebedev/config"
 )
 
@@ -44,7 +44,7 @@ func getServerTLSConfig(cfg *config.Config) *tls.Config {
 			Email:      cfg.UString("server.tls.letsencrypt.email"),
 			Cache:      autocert.DirCache(cfg.UString("server.tls.letsencrypt.cachedir")),
 		}
-		tlsConf = &tls.Config{GetCertificate: m.GetCertificate}
+		tlsConf = &tls.Config{GetCertificate: m.GetCertificate, MinVersion: tls.VersionTLS12}
 		// See if a cert or key was specified, load a TLS config from it if so
 	} else if len(cert) > 0 || len(key) > 0 {
 		if tlsConf, err = LoadTLSConfigFromFiles(cert, key, ca, false); err != nil {

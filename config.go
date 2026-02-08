@@ -3,17 +3,16 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"github.com/olebedev/config"
 )
 
 func getConfig() (cfg *config.Config, err error) {
 	dirname, _ := os.Getwd()
-	files, err := ioutil.ReadDir(dirname)
+	files, err := os.ReadDir(dirname)
 	if err != nil {
 		log.Error(err)
 	}

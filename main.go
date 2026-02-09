@@ -3,18 +3,26 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"flag"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
 	"syscall"
 	"time"
 
-	log "github.com/sirupsen/logrus"
-	"github.com/olebedev/config"
+	"github.com/colebrumley/tlspxy/internal/config"
+	"github.com/colebrumley/tlspxy/internal/health"
+	"github.com/colebrumley/tlspxy/internal/logging"
+	"github.com/colebrumley/tlspxy/internal/metrics"
+	"github.com/colebrumley/tlspxy/internal/proxy"
+	sighandler "github.com/colebrumley/tlspxy/internal/signal"
+	tlsconfig "github.com/colebrumley/tlspxy/internal/tls"
+
+	goyaml "gopkg.in/yaml.v2"
 )
 
 // AppVersion is the global application version
@@ -24,118 +32,180 @@ var AppVersion string
 var CommitID string
 
 func main() {
+	// Check for -version/--version before anything else
+	for _, arg := range os.Args[1:] {
+		if arg == "-version" || arg == "--version" {
+			fmt.Printf("tlspxy version %s (commit %s)\n", AppVersion, CommitID)
+			os.Exit(0)
+		}
+	}
+
 	var (
 		inner                  net.Listener
 		serverAddr, remoteAddr string
 		serverTCPAddr          *net.TCPAddr
 		remoteTLS              *tls.Config
 		err                    error
-		shm                    *SigHandlerMux
+		shm                    *sighandler.SigHandlerMux
 	)
 
 	// Pre-parse -config flags from os.Args before loading config.
 	// This allows specifying config files/dirs that are loaded
 	// before env vars and other flags override them.
-	configPaths := parseConfigPaths(os.Args[1:])
+	configPaths := config.ParseConfigPaths(os.Args[1:])
 
-	cfg, err = getConfig(configPaths...)
+	k, err := config.GetConfig(configPaths...)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("Failed to load config", "error", err)
+		os.Exit(1)
 	}
-	flag.Usage = func() {
-		fmt.Println("Version:       ", AppVersion, "| Commit", CommitID)
-		fmt.Println("Description:    TLSpxy - Tiny TLS termination tool")
-		fmt.Println("Usage:          tlspxy [OPTIONS]")
-		fmt.Println("Options:")
-		m, _ := cfg.Map("")
-		prettyPrintFlagMap(m)
-		fmt.Println("All options can be set via flags, environment variables, or configuration files.",
-			"\n  -> See https://github.com/colebrumley/tlspxy/wiki/Configuration for details.")
-	}
+
 	// Load priority => Files < Env < Flag
-	cfg.Env().Flag()
+	config.LoadEnvVars(k)
+	config.LoadFlags(k, AppVersion, CommitID)
+
+	if err := config.ValidateConfig(k); err != nil {
+		slog.Error("Invalid config", "error", err)
+		os.Exit(1)
+	}
 
 	// Create the SigHandlerMux and configure logging
-	shm = &SigHandlerMux{
-		do: map[os.Signal][]func(){},
-	}
+	shm = sighandler.New()
 	go shm.WatchForSignals()
-	configLogging(cfg)
+	logging.Configure(k)
+
+	// Initialize metrics if enabled
+	if k.Bool("metrics.enable") {
+		metrics.Init()
+		metrics.StartServer(
+			k.String("metrics.addr"),
+			k.String("metrics.path"),
+		)
+	}
 
 	// Print the loaded config if debug is on
-	c, _ := config.RenderYaml(cfg.Root)
-	log.Debugln("Loaded config:\n", c)
+	c, _ := goyaml.Marshal(k.Raw())
+	slog.Debug("Loaded config", "config", string(c))
 
 	// Parse the Server listener config
-	if serverAddr, err = cfg.String("server.addr"); err != nil {
-		log.Error("No server address defined!")
+	serverAddr = k.String("server.addr")
+	if serverAddr == "" {
+		slog.Error("No server address defined!")
 		os.Exit(1)
 	}
 	if serverTCPAddr, err = net.ResolveTCPAddr("tcp", serverAddr); err != nil {
-		log.Error(err)
+		slog.Error("Failed to resolve server address", "error", err)
 		os.Exit(1)
 	}
 
 	// Create the base TCP listener. Both TCP and HTTP proxies will
 	// be based on this listener.
 	if inner, err = net.ListenTCP("tcp", serverTCPAddr); err != nil {
-		log.Error(err)
+		slog.Error("Failed to listen", "error", err)
+		os.Exit(1)
 	}
 
 	// Configure the server's TLS settings
-	listener := configServerTLS(inner, cfg)
+	listener := tlsconfig.ConfigServer(inner, k)
 
 	// Load the remote config. This will depend on what kind of listener
 	// we have configured.
-	if remoteTLS, err = configRemoteTLS(cfg); err != nil {
-		log.Warningf("Skipping client TLS configuration: %v", err)
+	if remoteTLS, err = tlsconfig.ConfigRemote(k); err != nil {
+		slog.Warn(fmt.Sprintf("Skipping client TLS configuration: %v", err))
 		remoteTLS = nil
 	}
 
-	switch cfg.UString("server.type", "tcp") {
+	// Create a root context that is cancelled on SIGINT/SIGTERM.
+	rootCtx, rootCancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer rootCancel()
+
+	switch k.String("server.type") {
 	case "tcp":
 		// Pull remote.addr out of Config and convert to *net.TCPAddr
-		if remoteAddr, err = cfg.String("remote.addr"); err != nil {
-			log.Error("No remote address defined!")
+		remoteAddr = k.String("remote.addr")
+		if remoteAddr == "" {
+			slog.Error("No remote address defined!")
 			os.Exit(1)
 		}
-		log.Infof("Opening proxy from %s to %s", serverAddr, remoteAddr)
-		ctr := ProxyCounter{}
+		slog.Info("Opening proxy", "from", serverAddr, "to", remoteAddr)
+		ctr := proxy.Counter{}
 		shm.AddHandler(ctr.InterruptHandler, os.Interrupt, syscall.SIGTERM)
+
+		// Parse timeout configuration.
+		readTimeout, _ := time.ParseDuration(k.String("server.timeouts.read"))
+		writeTimeout, _ := time.ParseDuration(k.String("server.timeouts.write"))
+		idleTimeout, _ := time.ParseDuration(k.String("server.timeouts.idle"))
+
+		// When root context is cancelled, close the listener to break
+		// out of the Accept loop.
+		go func() {
+			<-rootCtx.Done()
+			listener.Close()
+		}()
+
+		var sem chan struct{}
+		if maxConns := k.Int("server.maxconns"); maxConns > 0 {
+			sem = make(chan struct{}, maxConns)
+			slog.Info("Connection limit configured", "maxconns", maxConns)
+		}
+
 		connID := 0
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				log.Errorf("Failed to accept connection '%s'", err)
+				// If the context was cancelled, this is a clean shutdown.
+				if rootCtx.Err() != nil {
+					slog.Info("Listener closed, shutting down")
+					break
+				}
+				slog.Error("Failed to accept connection", "error", err)
 				continue
 			}
+			if sem != nil {
+				select {
+				case sem <- struct{}{}:
+				default:
+					slog.Warn("Connection limit reached, rejecting", "maxconns", cap(sem))
+					conn.Close()
+					continue
+				}
+			}
 			connID++
-			connLog := log.WithFields(log.Fields{
-				"component": "tcp",
-				"conn":      connID,
-			})
-			connLog.WithField("src", conn.RemoteAddr().String()).Info("Accepted connection")
+			connLog := slog.With("component", "tcp", "conn", connID)
+			connLog.Info("Accepted connection", "src", conn.RemoteAddr().String())
 
-			p := &TCPProxy{
+			p := &proxy.TCPProxy{
 				Counter:       &ctr,
 				ServerConn:    conn,
 				ServerAddr:    serverAddr,
 				RemoteAddr:    remoteAddr,
 				RemoteTLSConf: remoteTLS,
-				ErrorSignal:   make(chan bool),
-				connID:        connID,
-				showContent:   cfg.UBool("log.contents", false),
-				log:           connLog,
+				ErrorSignal:   make(chan bool, 1),
+				Ctx:           rootCtx,
+				ConnID:        connID,
+				ShowContent:   k.Bool("log.contents"),
+				Log:           connLog,
+				ReadTimeout:   readTimeout,
+				WriteTimeout:  writeTimeout,
+				IdleTimeout:   idleTimeout,
 			}
-			go p.start()
+			go func() {
+				defer func() {
+					if sem != nil {
+						<-sem
+					}
+				}()
+				p.Start()
+			}()
 		}
 	case "http", "https":
 		var (
 			u  *url.URL
 			rp *httputil.ReverseProxy
 		)
-		if u, err = url.Parse(cfg.UString("remote.addr")); err != nil {
-			log.Error(err)
+		if u, err = url.Parse(k.String("remote.addr")); err != nil {
+			slog.Error("Failed to parse remote address", "error", err)
+			os.Exit(1)
 		}
 
 		director := func(req *http.Request) {
@@ -143,13 +213,13 @@ func main() {
 			req.Host = u.Host
 			req.URL.Scheme = u.Scheme
 			req.URL.Host = u.Host
-			req.URL.Path = singleJoiningSlash(u.Path, req.URL.Path)
+			req.URL.Path = proxy.SingleJoiningSlash(u.Path, req.URL.Path)
 			if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+				req.Header.Set("X-Real-IP", clientIP)
 				if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
 					clientIP = prior + ", " + clientIP
 				}
 				req.Header.Set("X-Forwarded-For", clientIP)
-				req.Header.Set("X-Real-IP", clientIP)
 			}
 			if u.RawQuery == "" || req.URL.RawQuery == "" {
 				req.URL.RawQuery = u.RawQuery + req.URL.RawQuery
@@ -160,37 +230,62 @@ func main() {
 				// explicitly disable User-Agent so it's not set to default value
 				req.Header.Set("User-Agent", "")
 			}
-			httpLog.WithFields(log.Fields{
-				"from": oldURL,
-				"to":   req.URL.String(),
-			}).Debug("Rewrote request URL")
+			slog.Debug("Rewrote request URL", "component", "http", "from", oldURL, "to", req.URL.String())
 		}
 
-		proxy := &ProxyTransport{
-			ShowContent: cfg.UBool("log.contents", false),
+		pt := &proxy.Transport{
+			ShowContent: k.Bool("log.contents"),
 			RoundTripper: &http.Transport{
 				TLSClientConfig: remoteTLS,
 			},
 		}
-		shm.AddHandler(proxy.InterruptHandler, os.Interrupt, syscall.SIGTERM)
+		shm.AddHandler(pt.InterruptHandler, os.Interrupt, syscall.SIGTERM)
 
 		rp = &httputil.ReverseProxy{
 			Director:  director,
-			Transport: proxy,
+			Transport: pt,
 		}
-		srv := &http.Server{Handler: rp}
+		var handler http.Handler = rp
+		if hcPath := k.String("server.healthcheck"); hcPath != "" {
+			handler = health.CheckMiddleware(hcPath, rp)
+		}
+		srv := &http.Server{
+			Handler:     handler,
+			BaseContext: func(_ net.Listener) context.Context { return rootCtx },
+		}
+		if maxConns := k.Int("server.maxconns"); maxConns > 0 {
+			sem := make(chan struct{}, maxConns)
+			slog.Info("Connection limit configured", "maxconns", maxConns)
+			srv.ConnState = func(conn net.Conn, state http.ConnState) {
+				switch state {
+				case http.StateNew:
+					select {
+					case sem <- struct{}{}:
+					default:
+						slog.Warn("Connection limit reached, rejecting", "maxconns", cap(sem))
+						conn.Close()
+					}
+				case http.StateClosed, http.StateHijacked:
+					select {
+					case <-sem:
+					default:
+					}
+				}
+			}
+		}
 		shm.AddHandler(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			srv.Shutdown(ctx)
 		}, os.Interrupt, syscall.SIGTERM)
 
-		log.Infof("Opening proxy from %s to %s", serverTCPAddr.String(), u.String())
+		slog.Info("Opening proxy", "from", serverTCPAddr.String(), "to", u.String())
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
+			slog.Error("Server error", "error", err)
+			os.Exit(1)
 		}
 	default:
-		log.Errorln("Unknown server type requested!")
+		slog.Error("Unknown server type requested!")
 		os.Exit(1)
 	}
 }

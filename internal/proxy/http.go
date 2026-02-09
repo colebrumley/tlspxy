@@ -1,16 +1,18 @@
-package main
+package proxy
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/colebrumley/tlspxy/internal/metrics"
 )
 
-// ProxyTransport is a custom http.Transport for use in the HTTP reverse proxy
-type ProxyTransport struct {
+// Transport is a custom http.Transport for use in the HTTP reverse proxy
+type Transport struct {
 	bytesTo, bytesFrom int64
 	ShowContent        bool
 	http.RoundTripper
@@ -38,40 +40,41 @@ func (c *countingReadCloser) Close() error {
 	return err
 }
 
-var httpLog = log.WithField("component", "http")
+var httpLog = slog.With("component", "http")
 
 // InterruptHandler writes info when an os signal is encountered.
-func (t *ProxyTransport) InterruptHandler() {
-	httpLog.WithFields(log.Fields{
-		"sent":     atomic.LoadInt64(&t.bytesTo),
-		"received": atomic.LoadInt64(&t.bytesFrom),
-	}).Info("Proxy shutting down")
+func (t *Transport) InterruptHandler() {
+	httpLog.Info("Proxy shutting down",
+		"sent", atomic.LoadInt64(&t.bytesTo),
+		"received", atomic.LoadInt64(&t.bytesFrom),
+	)
 }
 
 // RoundTrip invokes the underlying RoundTripper and captures data about the call
 // on its way back to the client.
-func (t *ProxyTransport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
-	entry := httpLog.WithField("url", req.URL.String())
+func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
+	entry := httpLog.With("url", req.URL.String())
 	entry.Debug("Calling remote")
 
 	if req.Body != nil {
-		cl, err := io.ReadAll(req.Body)
-		if err != nil {
-			entry.Errorf("Failed to read request body: %v", err)
+		req.Body = &countingReadCloser{
+			ReadCloser: req.Body,
+			onClose: func(n int64) {
+				atomic.AddInt64(&t.bytesTo, n)
+				if metrics.Enabled.Load() {
+					metrics.BytesSentTotal.Add(float64(n))
+				}
+			},
 		}
-		atomic.AddInt64(&t.bytesTo, int64(len(cl)))
-		req.Body = io.NopCloser(bytes.NewReader(cl))
 	}
 	resp, err = t.RoundTripper.RoundTrip(req)
 	if err != nil {
+		if metrics.Enabled.Load() {
+			metrics.ErrorsTotal.WithLabelValues("http").Inc()
+		}
 		resp = nil
 		return
 	}
-
-	respEntry := entry.WithFields(log.Fields{
-		"status":       resp.StatusCode,
-		"content_type": resp.Header.Get("Content-Type"),
-	})
 
 	if t.ShowContent {
 		b, err := io.ReadAll(resp.Body)
@@ -84,16 +87,29 @@ func (t *ProxyTransport) RoundTrip(req *http.Request) (resp *http.Response, err 
 			resp = nil
 			return resp, err
 		}
-		respEntry.WithField("bytes", len(b)).Debug("Response received")
-		respEntry.Debugf("Content: %s", string(b))
+		entry.Debug("Response received",
+			"status", resp.StatusCode,
+			"content_type", resp.Header.Get("Content-Type"),
+			"bytes", len(b),
+		)
+		entry.Debug(fmt.Sprintf("Content: %s", string(b)))
 		atomic.AddInt64(&t.bytesFrom, int64(len(b)))
+		if metrics.Enabled.Load() {
+			metrics.BytesReceivedTotal.Add(float64(len(b)))
+		}
 		resp.Body = io.NopCloser(bytes.NewReader(b))
 	} else {
-		respEntry.Debug("Response received")
+		entry.Debug("Response received",
+			"status", resp.StatusCode,
+			"content_type", resp.Header.Get("Content-Type"),
+		)
 		resp.Body = &countingReadCloser{
 			ReadCloser: resp.Body,
 			onClose: func(n int64) {
 				atomic.AddInt64(&t.bytesFrom, n)
+				if metrics.Enabled.Load() {
+					metrics.BytesReceivedTotal.Add(float64(n))
+				}
 			},
 		}
 	}

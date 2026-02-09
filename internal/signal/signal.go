@@ -1,22 +1,32 @@
-package main
+package signal
 
 import (
+	"fmt"
+	"log/slog"
 	"os"
-	"os/signal"
+	ossignal "os/signal"
 	"sync"
 	"syscall"
-
-	log "github.com/sirupsen/logrus"
 )
 
 // SigHandlerMux watches for kill signals and then executes
 // handlers.
 type SigHandlerMux struct {
+	mu sync.RWMutex
 	do map[os.Signal][]func()
+}
+
+// New creates a new SigHandlerMux ready for use.
+func New() *SigHandlerMux {
+	return &SigHandlerMux{
+		do: map[os.Signal][]func(){},
+	}
 }
 
 // AddHandler registers a function to one or more signals
 func (shm *SigHandlerMux) AddHandler(fn func(), sigs ...os.Signal) {
+	shm.mu.Lock()
+	defer shm.mu.Unlock()
 	for _, sig := range sigs {
 		handlers := append(shm.do[sig], fn)
 		shm.do[sig] = handlers
@@ -27,13 +37,16 @@ func (shm *SigHandlerMux) AddHandler(fn func(), sigs ...os.Signal) {
 // cleanup callbacks before exiting.
 func (shm *SigHandlerMux) WatchForSignals() {
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	ossignal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	for {
 		select {
 		case s := <-signals:
-			log.Warningln("Trapped signal:", s)
+			slog.Warn(fmt.Sprintf("Trapped signal: %v", s))
+			shm.mu.RLock()
+			handlers := shm.do[s]
+			shm.mu.RUnlock()
 			wg := sync.WaitGroup{}
-			for _, fn := range shm.do[s] {
+			for _, fn := range handlers {
 				wg.Add(1)
 				go func(f func()) {
 					f()
@@ -41,7 +54,6 @@ func (shm *SigHandlerMux) WatchForSignals() {
 				}(fn)
 			}
 			wg.Wait()
-			os.Exit(1)
 		}
 	}
 }

@@ -1,15 +1,14 @@
-package main
+package signal
 
 import (
 	"os"
+	"sync"
 	"syscall"
 	"testing"
 )
 
 func TestAddHandler(t *testing.T) {
-	shm := &SigHandlerMux{
-		do: map[os.Signal][]func(){},
-	}
+	shm := New()
 
 	called := false
 	handler := func() { called = true }
@@ -28,9 +27,7 @@ func TestAddHandler(t *testing.T) {
 }
 
 func TestAddHandler_MultipleSignals(t *testing.T) {
-	shm := &SigHandlerMux{
-		do: map[os.Signal][]func(){},
-	}
+	shm := New()
 
 	handler := func() {}
 	shm.AddHandler(handler, os.Interrupt, syscall.SIGTERM)
@@ -44,9 +41,7 @@ func TestAddHandler_MultipleSignals(t *testing.T) {
 }
 
 func TestAddHandler_MultipleHandlers(t *testing.T) {
-	shm := &SigHandlerMux{
-		do: map[os.Signal][]func(){},
-	}
+	shm := New()
 
 	count := 0
 	shm.AddHandler(func() { count++ }, os.Interrupt)
@@ -66,9 +61,7 @@ func TestAddHandler_MultipleHandlers(t *testing.T) {
 }
 
 func TestAddHandler_SIGTERMRegistered(t *testing.T) {
-	shm := &SigHandlerMux{
-		do: map[os.Signal][]func(){},
-	}
+	shm := New()
 
 	executed := false
 	shm.AddHandler(func() { executed = true }, syscall.SIGTERM)
@@ -83,5 +76,31 @@ func TestAddHandler_SIGTERMRegistered(t *testing.T) {
 	shm.do[syscall.SIGTERM][0]()
 	if !executed {
 		t.Error("SIGTERM handler was not executed")
+	}
+}
+
+func TestSigHandlerMux_ConcurrentAdd(t *testing.T) {
+	shm := New()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			shm.AddHandler(func() {}, os.Interrupt, syscall.SIGTERM)
+		}()
+	}
+	wg.Wait()
+
+	shm.mu.RLock()
+	intCount := len(shm.do[os.Interrupt])
+	termCount := len(shm.do[syscall.SIGTERM])
+	shm.mu.RUnlock()
+
+	if intCount != 100 {
+		t.Errorf("expected 100 handlers for Interrupt, got %d", intCount)
+	}
+	if termCount != 100 {
+		t.Errorf("expected 100 handlers for SIGTERM, got %d", termCount)
 	}
 }

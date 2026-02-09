@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"context"
@@ -6,23 +6,22 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	log "github.com/sirupsen/logrus"
 )
 
 const (
 	testTimeout = 5 * time.Second
-	certDir     = "contrib/testdata/certs"
 )
 
 // integrationEchoServer starts a TCP server that echoes back whatever it receives.
@@ -117,16 +116,19 @@ func loadTestCAPool(t *testing.T, caFile string) *x509.CertPool {
 	return pool
 }
 
+func certDir(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(projectRoot(t), "contrib/testdata/certs")
+}
+
 func TestIntegration_PlaintextPassthrough(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Start a plain TCP echo server as the backend
 	echoAddr, echoCleanup := integrationEchoServer(t)
 	t.Cleanup(echoCleanup)
 
-	// Start a plain TCP listener for the proxy
 	proxyLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -134,10 +136,10 @@ func TestIntegration_PlaintextPassthrough(t *testing.T) {
 	t.Cleanup(func() { proxyLn.Close() })
 	proxyAddr := proxyLn.Addr().String()
 
-	counter := &ProxyCounter{}
+	counter := &Counter{}
 
-	// Accept one connection and proxy it
 	accepted := make(chan struct{})
+	proxyDone := make(chan struct{})
 	go func() {
 		conn, err := proxyLn.Accept()
 		if err != nil {
@@ -150,34 +152,32 @@ func TestIntegration_PlaintextPassthrough(t *testing.T) {
 			ServerAddr:  proxyAddr,
 			RemoteAddr:  echoAddr,
 			ErrorSignal: make(chan bool, 1),
-			connID:      1,
-			log:         log.WithFields(log.Fields{"component": "tcp", "conn": 1}),
+			Ctx:         context.Background(),
+			ConnID:      1,
+			Log:         slog.With("component", "tcp", "conn", 1),
 		}
-		p.start()
+		p.Start()
+		close(proxyDone)
 	}()
 
-	// Connect a plain TCP client to the proxy
 	conn, err := net.DialTimeout("tcp", proxyAddr, testTimeout)
 	if err != nil {
 		t.Fatalf("Failed to connect to proxy: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	// Wait for the proxy to accept
 	select {
 	case <-accepted:
 	case <-time.After(testTimeout):
 		t.Fatal("Timed out waiting for proxy to accept connection")
 	}
 
-	// Send test data
 	testData := "Hello plaintext passthrough"
 	conn.SetDeadline(time.Now().Add(testTimeout))
 	if _, err := conn.Write([]byte(testData)); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
 
-	// Read the echo
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -189,11 +189,13 @@ func TestIntegration_PlaintextPassthrough(t *testing.T) {
 		t.Errorf("Echo mismatch: got %q, want %q", got, testData)
 	}
 
-	// Close client connection so the proxy goroutine finishes
 	conn.Close()
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-proxyDone:
+	case <-time.After(testTimeout):
+		t.Fatal("Timed out waiting for proxy goroutine to finish")
+	}
 
-	// Verify byte counters were updated
 	to, from := counter.Total()
 	if to == 0 {
 		t.Error("Expected to counter > 0")
@@ -208,18 +210,16 @@ func TestIntegration_TLSTermination_TCP(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Start a plain TCP echo server as the backend (no TLS)
 	echoAddr, echoCleanup := integrationEchoServer(t)
 	t.Cleanup(echoCleanup)
 
-	// Load proxy server TLS config
-	proxyCert := certDir + "/proxy.crt"
-	proxyKey := certDir + "/proxy.key"
-	caFile := certDir + "/ca.crt"
+	cd := certDir(t)
+	proxyCert := filepath.Join(cd, "proxy.crt")
+	proxyKey := filepath.Join(cd, "proxy.key")
+	caFile := filepath.Join(cd, "ca.crt")
 
 	serverTLSConf := loadTestTLSConfig(t, proxyCert, proxyKey, caFile)
 
-	// Start a TCP listener and wrap with TLS for the proxy's server side
 	innerLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -228,9 +228,8 @@ func TestIntegration_TLSTermination_TCP(t *testing.T) {
 	t.Cleanup(func() { tlsLn.Close() })
 	proxyAddr := tlsLn.Addr().String()
 
-	counter := &ProxyCounter{}
+	counter := &Counter{}
 
-	// Accept connections and proxy them to the plain echo server
 	accepted := make(chan struct{}, 1)
 	go func() {
 		conn, err := tlsLn.Accept()
@@ -247,14 +246,13 @@ func TestIntegration_TLSTermination_TCP(t *testing.T) {
 			ServerAddr:  proxyAddr,
 			RemoteAddr:  echoAddr,
 			ErrorSignal: make(chan bool, 1),
-			connID:      1,
-			log:         log.WithFields(log.Fields{"component": "tcp", "conn": 1}),
+			Ctx:         context.Background(),
+			ConnID:      1,
+			Log:         slog.With("component", "tcp", "conn", 1),
 		}
-		// No RemoteTLSConf — backend is plain TCP
-		p.start()
+		p.Start()
 	}()
 
-	// Connect as a TLS client to the proxy
 	caPool := loadTestCAPool(t, caFile)
 	clientTLSConf := &tls.Config{
 		RootCAs:    caPool,
@@ -271,21 +269,18 @@ func TestIntegration_TLSTermination_TCP(t *testing.T) {
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	// Wait for the proxy to accept
 	select {
 	case <-accepted:
 	case <-time.After(testTimeout):
 		t.Fatal("Timed out waiting for proxy to accept TLS connection")
 	}
 
-	// Send data through the TLS connection
 	testData := "Hello through TLS termination proxy"
 	conn.SetDeadline(time.Now().Add(testTimeout))
 	if _, err := conn.Write([]byte(testData)); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
 
-	// Read the echoed response
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -297,7 +292,6 @@ func TestIntegration_TLSTermination_TCP(t *testing.T) {
 		t.Errorf("Echo mismatch: got %q, want %q", got, testData)
 	}
 
-	// Verify the TLS connection state
 	state := conn.ConnectionState()
 	if !state.HandshakeComplete {
 		t.Error("TLS handshake not completed")
@@ -314,16 +308,14 @@ func TestIntegration_TLSTermination_HTTP(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Capture request details from the backend
 	var (
-		mu              sync.Mutex
-		capturedBody    string
-		capturedXFF     string
-		capturedPath    string
-		capturedMethod  string
+		mu             sync.Mutex
+		capturedBody   string
+		capturedXFF    string
+		capturedPath   string
+		capturedMethod string
 	)
 
-	// Start a plain HTTP backend
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -337,20 +329,18 @@ func TestIntegration_TLSTermination_HTTP(t *testing.T) {
 	}))
 	t.Cleanup(backend.Close)
 
-	// Parse backend URL
 	backendURL, err := url.Parse(backend.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Load proxy server TLS config
-	proxyCert := certDir + "/proxy.crt"
-	proxyKey := certDir + "/proxy.key"
-	caFile := certDir + "/ca.crt"
+	cd := certDir(t)
+	proxyCert := filepath.Join(cd, "proxy.crt")
+	proxyKey := filepath.Join(cd, "proxy.key")
+	caFile := filepath.Join(cd, "ca.crt")
 
 	serverTLSConf := loadTestTLSConfig(t, proxyCert, proxyKey, caFile)
 
-	// Create TLS listener for the proxy's server side
 	innerLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -359,12 +349,11 @@ func TestIntegration_TLSTermination_HTTP(t *testing.T) {
 	t.Cleanup(func() { tlsLn.Close() })
 	proxyAddr := tlsLn.Addr().String()
 
-	// Set up the reverse proxy exactly like main.go's HTTP mode
 	director := func(req *http.Request) {
 		req.Host = backendURL.Host
 		req.URL.Scheme = backendURL.Scheme
 		req.URL.Host = backendURL.Host
-		req.URL.Path = singleJoiningSlash(backendURL.Path, req.URL.Path)
+		req.URL.Path = SingleJoiningSlash(backendURL.Path, req.URL.Path)
 		if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
 			if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
 				clientIP = prior + ", " + clientIP
@@ -374,13 +363,13 @@ func TestIntegration_TLSTermination_HTTP(t *testing.T) {
 		}
 	}
 
-	proxy := &ProxyTransport{
+	proxyTransport := &Transport{
 		RoundTripper: &http.Transport{},
 	}
 
 	rp := &httputil.ReverseProxy{
 		Director:  director,
-		Transport: proxy,
+		Transport: proxyTransport,
 	}
 
 	srv := &http.Server{Handler: rp}
@@ -395,7 +384,6 @@ func TestIntegration_TLSTermination_HTTP(t *testing.T) {
 		srv.Shutdown(ctx)
 	})
 
-	// Create an HTTPS client that trusts our CA
 	caPool := loadTestCAPool(t, caFile)
 	httpClient := &http.Client{
 		Timeout: testTimeout,
@@ -408,7 +396,6 @@ func TestIntegration_TLSTermination_HTTP(t *testing.T) {
 		},
 	}
 
-	// Send a POST request through the TLS proxy to the plain HTTP backend
 	reqBody := "integration-test-request-body"
 	reqURL := fmt.Sprintf("https://%s/test-path", proxyAddr)
 	req, err := http.NewRequest("POST", reqURL, strings.NewReader(reqBody))
@@ -423,23 +410,19 @@ func TestIntegration_TLSTermination_HTTP(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// Read response
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read response body: %v", err)
 	}
 
-	// Verify response body matches what the backend sent
 	if string(respBody) != "backend-response-ok" {
 		t.Errorf("Response body = %q, want %q", string(respBody), "backend-response-ok")
 	}
 
-	// Verify status code
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Status code = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	// Verify backend captured the request correctly
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -462,21 +445,19 @@ func TestIntegration_TLSBothSides(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Start a TLS echo server as the backend
-	serverCert := certDir + "/server.crt"
-	serverKey := certDir + "/server.key"
-	caFile := certDir + "/ca.crt"
+	cd := certDir(t)
+	serverCert := filepath.Join(cd, "server.crt")
+	serverKey := filepath.Join(cd, "server.key")
+	caFile := filepath.Join(cd, "ca.crt")
 
 	echoAddr, echoCleanup := integrationTLSEchoServer(t, serverCert, serverKey, caFile)
 	t.Cleanup(echoCleanup)
 
-	// Load proxy server TLS config (proxy-facing side)
-	proxyCert := certDir + "/proxy.crt"
-	proxyKey := certDir + "/proxy.key"
+	proxyCert := filepath.Join(cd, "proxy.crt")
+	proxyKey := filepath.Join(cd, "proxy.key")
 
 	serverTLSConf := loadTestTLSConfig(t, proxyCert, proxyKey, caFile)
 
-	// Start a TLS listener for the proxy's server side
 	innerLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -485,9 +466,8 @@ func TestIntegration_TLSBothSides(t *testing.T) {
 	t.Cleanup(func() { tlsLn.Close() })
 	proxyAddr := tlsLn.Addr().String()
 
-	counter := &ProxyCounter{}
+	counter := &Counter{}
 
-	// Remote TLS config for the proxy → backend connection
 	caPool := loadTestCAPool(t, caFile)
 	remoteTLSConf := &tls.Config{
 		RootCAs:    caPool,
@@ -495,7 +475,6 @@ func TestIntegration_TLSBothSides(t *testing.T) {
 		MinVersion: tls.VersionTLS12,
 	}
 
-	// Accept connections and proxy them to the TLS echo server
 	accepted := make(chan struct{}, 1)
 	go func() {
 		conn, err := tlsLn.Accept()
@@ -513,13 +492,13 @@ func TestIntegration_TLSBothSides(t *testing.T) {
 			RemoteAddr:    echoAddr,
 			RemoteTLSConf: remoteTLSConf,
 			ErrorSignal:   make(chan bool, 1),
-			connID:        1,
-			log:           log.WithFields(log.Fields{"component": "tcp", "conn": 1}),
+			Ctx:           context.Background(),
+			ConnID:        1,
+			Log:           slog.With("component", "tcp", "conn", 1),
 		}
-		p.start()
+		p.Start()
 	}()
 
-	// Connect as a TLS client to the proxy
 	clientTLSConf := &tls.Config{
 		RootCAs:    caPool,
 		ServerName: "localhost",
@@ -535,24 +514,18 @@ func TestIntegration_TLSBothSides(t *testing.T) {
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	// Wait for the proxy to accept
 	select {
 	case <-accepted:
 	case <-time.After(testTimeout):
 		t.Fatal("Timed out waiting for proxy to accept TLS connection")
 	}
 
-	// Give the proxy a moment to establish the backend TLS connection
-	time.Sleep(100 * time.Millisecond)
-
-	// Send data through both TLS layers
 	testData := "Hello through double TLS proxy"
 	conn.SetDeadline(time.Now().Add(testTimeout))
 	if _, err := conn.Write([]byte(testData)); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
 
-	// Read the echoed response
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -564,7 +537,6 @@ func TestIntegration_TLSBothSides(t *testing.T) {
 		t.Errorf("Echo mismatch: got %q, want %q", got, testData)
 	}
 
-	// Verify the client-proxy TLS connection state
 	state := conn.ConnectionState()
 	if !state.HandshakeComplete {
 		t.Error("TLS handshake not completed")

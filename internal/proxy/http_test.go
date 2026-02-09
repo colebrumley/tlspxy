@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"bytes"
@@ -25,6 +25,7 @@ type mockRoundTripper struct {
 func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Body != nil {
 		m.receivedBody, _ = io.ReadAll(req.Body)
+		req.Body.Close()
 	}
 	if m.err != nil {
 		return nil, m.err
@@ -33,9 +34,6 @@ func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 func TestRoundTrip_PreservesBody(t *testing.T) {
-	// This is the critical test: the original bug consumed req.Body without
-	// reconstructing it. The fix reads the body, counts bytes, then puts
-	// a new reader back on req.Body.
 	originalBody := "POST body data that must be preserved"
 
 	mock := &mockRoundTripper{
@@ -46,7 +44,7 @@ func TestRoundTrip_PreservesBody(t *testing.T) {
 		},
 	}
 
-	transport := &ProxyTransport{
+	transport := &Transport{
 		RoundTripper: mock,
 	}
 
@@ -58,12 +56,10 @@ func TestRoundTrip_PreservesBody(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// The mock should have received the full original body
 	if string(mock.receivedBody) != originalBody {
 		t.Errorf("Mock received body = %q, want %q", string(mock.receivedBody), originalBody)
 	}
 
-	// Verify the response body is readable and contains expected data
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("reading response body: %v", err)
@@ -82,7 +78,7 @@ func TestRoundTrip_NilBody(t *testing.T) {
 		},
 	}
 
-	transport := &ProxyTransport{
+	transport := &Transport{
 		RoundTripper: mock,
 	}
 
@@ -93,7 +89,6 @@ func TestRoundTrip_NilBody(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// bytesTo should be 0 for nil body
 	if got := atomic.LoadInt64(&transport.bytesTo); got != 0 {
 		t.Errorf("bytesTo = %d, want 0", got)
 	}
@@ -111,8 +106,8 @@ func TestRoundTrip_CountsBytes(t *testing.T) {
 		},
 	}
 
-	transport := &ProxyTransport{
-		ShowContent:  true, // force immediate read of response body
+	transport := &Transport{
+		ShowContent:  true,
 		RoundTripper: mock,
 	}
 
@@ -135,8 +130,6 @@ func TestRoundTrip_CountsBytes(t *testing.T) {
 }
 
 func TestRoundTrip_StreamingResponse(t *testing.T) {
-	// When ShowContent is false, the response body should be wrapped in a
-	// countingReadCloser that counts bytes on the fly as the caller reads.
 	responseBody := "streaming response content that is somewhat large"
 
 	mock := &mockRoundTripper{
@@ -147,7 +140,7 @@ func TestRoundTrip_StreamingResponse(t *testing.T) {
 		},
 	}
 
-	transport := &ProxyTransport{
+	transport := &Transport{
 		ShowContent:  false,
 		RoundTripper: mock,
 	}
@@ -158,12 +151,10 @@ func TestRoundTrip_StreamingResponse(t *testing.T) {
 		t.Fatalf("RoundTrip() error = %v", err)
 	}
 
-	// Before reading, bytesFrom should be 0
 	if got := atomic.LoadInt64(&transport.bytesFrom); got != 0 {
 		t.Errorf("bytesFrom before read = %d, want 0", got)
 	}
 
-	// Read and close the body
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 
@@ -171,7 +162,6 @@ func TestRoundTrip_StreamingResponse(t *testing.T) {
 		t.Errorf("body = %q, want %q", string(body), responseBody)
 	}
 
-	// After close, bytesFrom should be updated
 	if got := atomic.LoadInt64(&transport.bytesFrom); got != int64(len(responseBody)) {
 		t.Errorf("bytesFrom after close = %d, want %d", got, len(responseBody))
 	}
@@ -188,7 +178,6 @@ func TestCountingReadCloser(t *testing.T) {
 		},
 	}
 
-	// Read in small chunks
 	buf := make([]byte, 5)
 	var total int
 	for {
@@ -206,7 +195,6 @@ func TestCountingReadCloser(t *testing.T) {
 		t.Errorf("total bytes read = %d, want %d", total, len(data))
 	}
 
-	// Close should trigger the callback
 	if err := crc.Close(); err != nil {
 		t.Fatalf("Close error: %v", err)
 	}
@@ -235,8 +223,7 @@ func TestCountingReadCloser_Empty(t *testing.T) {
 }
 
 func TestRoundTrip_LargeResponse(t *testing.T) {
-	// Test streaming a large response body
-	largeBody := strings.Repeat("x", 1024*1024) // 1 MB
+	largeBody := strings.Repeat("x", 1024*1024)
 
 	mock := &mockRoundTripper{
 		response: &http.Response{
@@ -246,8 +233,8 @@ func TestRoundTrip_LargeResponse(t *testing.T) {
 		},
 	}
 
-	transport := &ProxyTransport{
-		ShowContent:  false, // streaming mode
+	transport := &Transport{
+		ShowContent:  false,
 		RoundTripper: mock,
 	}
 
@@ -274,7 +261,7 @@ func TestRoundTrip_ErrorFromUpstream(t *testing.T) {
 		err: fmt.Errorf("connection refused"),
 	}
 
-	transport := &ProxyTransport{
+	transport := &Transport{
 		RoundTripper: mock,
 	}
 
@@ -302,7 +289,7 @@ func TestRoundTrip_ShowContentTrue_ResponseReadable(t *testing.T) {
 		},
 	}
 
-	transport := &ProxyTransport{
+	transport := &Transport{
 		ShowContent:  true,
 		RoundTripper: mock,
 	}
@@ -314,8 +301,6 @@ func TestRoundTrip_ShowContentTrue_ResponseReadable(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// With ShowContent=true, the body should have been read and re-buffered
-	// into a NopCloser. The caller should still be able to read it fully.
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("reading response body: %v", err)
@@ -324,7 +309,6 @@ func TestRoundTrip_ShowContentTrue_ResponseReadable(t *testing.T) {
 		t.Errorf("response body = %q, want %q", string(body), responseBody)
 	}
 
-	// bytesFrom should be counted accurately
 	if got := atomic.LoadInt64(&transport.bytesFrom); got != int64(len(responseBody)) {
 		t.Errorf("bytesFrom = %d, want %d", got, len(responseBody))
 	}
@@ -337,9 +321,9 @@ type threadSafeRoundTripper struct {
 }
 
 func (m *threadSafeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Read the request body (if any) to allow bytesTo counting
 	if req.Body != nil {
 		io.ReadAll(req.Body)
+		req.Body.Close()
 	}
 	m.mu.Lock()
 	body := m.responseBody
@@ -356,7 +340,7 @@ func TestRoundTrip_Concurrent(t *testing.T) {
 	const reqBodySize = 100
 	const respBodySize = 200
 
-	transport := &ProxyTransport{
+	transport := &Transport{
 		ShowContent: true,
 		RoundTripper: &threadSafeRoundTripper{
 			responseBody: strings.Repeat("r", respBodySize),
@@ -398,13 +382,13 @@ func makeDirector(target *url.URL) func(*http.Request) {
 		req.Host = target.Host
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
-		req.URL.Path = singleJoiningSlash(target.Path, req.URL.Path)
+		req.URL.Path = SingleJoiningSlash(target.Path, req.URL.Path)
 		if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+			req.Header.Set("X-Real-IP", clientIP)
 			if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
 				clientIP = prior + ", " + clientIP
 			}
 			req.Header.Set("X-Forwarded-For", clientIP)
-			req.Header.Set("X-Real-IP", clientIP)
 		}
 		if target.RawQuery == "" || req.URL.RawQuery == "" {
 			req.URL.RawQuery = target.RawQuery + req.URL.RawQuery
@@ -445,9 +429,8 @@ func TestHTTPDirector_XForwardedFor(t *testing.T) {
 		if got := req.Header.Get("X-Forwarded-For"); got != want {
 			t.Errorf("X-Forwarded-For = %q, want %q", got, want)
 		}
-		// X-Real-IP gets the combined value per main.go's logic
-		if got := req.Header.Get("X-Real-IP"); got != want {
-			t.Errorf("X-Real-IP = %q, want %q", got, want)
+		if got := req.Header.Get("X-Real-IP"); got != "10.0.0.2" {
+			t.Errorf("X-Real-IP = %q, want %q", got, "10.0.0.2")
 		}
 	})
 
@@ -471,7 +454,6 @@ func TestHTTPDirector_XForwardedFor(t *testing.T) {
 	t.Run("sets empty User-Agent when absent", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", "http://proxy.local/", nil)
 		req.RemoteAddr = "127.0.0.1:1234"
-		// Delete User-Agent header entirely
 		delete(req.Header, "User-Agent")
 		director(req)
 
@@ -495,7 +477,6 @@ func TestHTTPDirector_XForwardedFor(t *testing.T) {
 }
 
 func TestHTTPReverseProxy_EndToEnd(t *testing.T) {
-	// Capture what the backend received
 	var (
 		mu              sync.Mutex
 		capturedMethod  string
@@ -505,7 +486,6 @@ func TestHTTPReverseProxy_EndToEnd(t *testing.T) {
 		capturedBody    string
 	)
 
-	// Start a real HTTP backend
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		capturedMethod = r.Method
@@ -525,7 +505,7 @@ func TestHTTPReverseProxy_EndToEnd(t *testing.T) {
 
 	backendURL, _ := url.Parse(backend.URL)
 
-	proxy := &ProxyTransport{
+	proxy := &Transport{
 		ShowContent:  true,
 		RoundTripper: http.DefaultTransport,
 	}
@@ -538,7 +518,6 @@ func TestHTTPReverseProxy_EndToEnd(t *testing.T) {
 	frontend := httptest.NewServer(rp)
 	defer frontend.Close()
 
-	// Test GET request
 	t.Run("GET", func(t *testing.T) {
 		resp, err := http.Get(frontend.URL + "/hello")
 		if err != nil {
@@ -567,7 +546,6 @@ func TestHTTPReverseProxy_EndToEnd(t *testing.T) {
 		mu.Unlock()
 	})
 
-	// Test POST request with body
 	t.Run("POST", func(t *testing.T) {
 		postBody := "important POST data"
 		resp, err := http.Post(frontend.URL+"/submit", "text/plain", strings.NewReader(postBody))
@@ -591,7 +569,6 @@ func TestHTTPReverseProxy_EndToEnd(t *testing.T) {
 		mu.Unlock()
 	})
 
-	// Byte counters should be non-zero after the requests
 	if got := atomic.LoadInt64(&proxy.bytesFrom); got == 0 {
 		t.Error("bytesFrom is 0 after e2e requests, expected non-zero")
 	}
@@ -600,14 +577,13 @@ func TestHTTPReverseProxy_EndToEnd(t *testing.T) {
 	}
 }
 
-func TestProxyTransport_InterruptHandler(t *testing.T) {
-	transport := &ProxyTransport{
+func TestTransport_InterruptHandler(t *testing.T) {
+	transport := &Transport{
 		RoundTripper: http.DefaultTransport,
 	}
 
 	atomic.StoreInt64(&transport.bytesTo, 12345)
 	atomic.StoreInt64(&transport.bytesFrom, 67890)
 
-	// InterruptHandler just logs; verify it doesn't panic
 	transport.InterruptHandler()
 }

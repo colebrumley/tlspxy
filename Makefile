@@ -25,13 +25,13 @@ install: build
 	mv bin/$(GO_BIN_NAME) $(GO_INSTALL_PATH)
 
 test:
-	go test -v -bench=.
+	go test -v -race ./...
 
 docker:
-	docker pull golang:latest
-	docker run -it --rm -v "$$(pwd):/go/src/$(GO_REPO)" \
-		golang:latest bash -c "cd /go/src/$(GO_REPO) && make"
-	docker build -t $(DOCKER_IMAGE_NAME) -f contrib/Dockerfile .
+	docker build -t $(DOCKER_IMAGE_NAME) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT_ID=$(COMMIT_ID) \
+		-f contrib/Dockerfile .
 
 deps:
 	go mod tidy

@@ -1,25 +1,45 @@
-package main
+package proxy
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"io"
+	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	log "github.com/sirupsen/logrus"
 )
 
-func testLog() *log.Entry {
-	return log.WithFields(log.Fields{"component": "tcp", "conn": 0})
+func testLog() *slog.Logger {
+	return slog.With("component", "tcp", "conn", 0)
 }
 
-func TestProxyCounter_Concurrent(t *testing.T) {
-	counter := &ProxyCounter{}
+// projectRoot finds the project root by looking for go.mod.
+func projectRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("could not find project root")
+		}
+		dir = parent
+	}
+}
+
+func TestCounter_Concurrent(t *testing.T) {
+	counter := &Counter{}
 
 	const goroutines = 100
 	const opsPerGoroutine = 1000
@@ -61,8 +81,8 @@ func TestProxyCounter_Concurrent(t *testing.T) {
 	}
 }
 
-func TestProxyCounter_Total(t *testing.T) {
-	counter := &ProxyCounter{}
+func TestCounter_Total(t *testing.T) {
+	counter := &Counter{}
 	counter.To(100)
 	counter.To(200)
 	counter.From(50)
@@ -82,19 +102,20 @@ func TestTCPProxy_Pipe(t *testing.T) {
 	serverClient, serverProxy := net.Pipe()
 	remoteProxy, remoteServer := net.Pipe()
 
-	counter := &ProxyCounter{}
+	counter := &Counter{}
 	proxy := &TCPProxy{
 		Counter:     counter,
 		ServerConn:  serverProxy,
 		RemoteConn:  remoteProxy,
 		ErrorSignal: make(chan bool, 1),
-		closeOnce:   sync.Once{},
-		log:         testLog(),
+		Ctx:         context.Background(),
+		CloseOnce:   sync.Once{},
+		Log:         testLog(),
 	}
 
 	// Start piping in both directions
-	go proxy.pipe(proxy.ServerConn, proxy.RemoteConn)
-	go proxy.pipe(proxy.RemoteConn, proxy.ServerConn)
+	go proxy.Pipe(proxy.ServerConn, proxy.RemoteConn)
+	go proxy.Pipe(proxy.RemoteConn, proxy.ServerConn)
 
 	// Send data from "server" (client) side to "remote" side
 	testData := []byte("hello from server") // 17 bytes
@@ -128,9 +149,6 @@ func TestTCPProxy_Pipe(t *testing.T) {
 	}
 
 	// Wait for counters to reach expected values before closing.
-	// The pipe goroutines update counters right after dst.Write returns,
-	// but there can be a scheduling gap between Write returning and the
-	// atomic add executing.
 	deadline := time.After(2 * time.Second)
 	for {
 		to, from := counter.Total()
@@ -158,9 +176,7 @@ func TestTCPProxy_Pipe(t *testing.T) {
 		t.Fatal("Timed out waiting for ErrorSignal after closing connections")
 	}
 
-	// Assert exact byte counts:
-	// "hello from server" goes server→remote, counted as To (17 bytes)
-	// "hello from remote" goes remote→server, counted as From (17 bytes)
+	// Assert exact byte counts
 	to, from := counter.Total()
 	if to != 17 {
 		t.Errorf("To counter = %d, want 17", to)
@@ -171,44 +187,37 @@ func TestTCPProxy_Pipe(t *testing.T) {
 }
 
 func TestTCPProxy_ErrorHandling(t *testing.T) {
-	// Verify that closing one side of a connection signals via ErrorSignal
-	// and that the sync.Once prevents double-signaling.
 	serverClient, serverProxy := net.Pipe()
 	remoteProxy, remoteServer := net.Pipe()
 
-	counter := &ProxyCounter{}
+	counter := &Counter{}
 	errSignal := make(chan bool, 1)
 	proxy := &TCPProxy{
 		Counter:     counter,
 		ServerConn:  serverProxy,
 		RemoteConn:  remoteProxy,
 		ErrorSignal: errSignal,
-		closeOnce:   sync.Once{},
-		log:         testLog(),
+		Ctx:         context.Background(),
+		CloseOnce:   sync.Once{},
+		Log:         testLog(),
 	}
 
-	// Start piping
-	go proxy.pipe(proxy.ServerConn, proxy.RemoteConn)
-	go proxy.pipe(proxy.RemoteConn, proxy.ServerConn)
+	go proxy.Pipe(proxy.ServerConn, proxy.RemoteConn)
+	go proxy.Pipe(proxy.RemoteConn, proxy.ServerConn)
 
-	// Close one end - should trigger error signal
 	serverClient.Close()
 	remoteServer.Close()
 
 	select {
 	case <-errSignal:
-		// Got the signal, as expected
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timed out waiting for ErrorSignal")
 	}
 
-	// The sync.Once ensures only one signal is sent.
-	// Verify the channel has at most one value.
 	select {
 	case <-errSignal:
 		t.Fatal("ErrorSignal received twice - sync.Once is not working")
 	default:
-		// Channel is empty - correct behavior
 	}
 }
 
@@ -217,37 +226,32 @@ func TestTCPProxy_DialTimeout(t *testing.T) {
 		t.Skip("Skipping dial timeout test in short mode")
 	}
 
-	// Test that TCPProxy.start() doesn't hang when the remote is unreachable.
-	// 10.255.255.1 is a non-routable IP per RFC 5737.
 	serverClient, serverProxy := net.Pipe()
 	defer serverClient.Close()
 
-	counter := &ProxyCounter{}
+	counter := &Counter{}
 	errSignal := make(chan bool, 1)
 	proxy := &TCPProxy{
 		Counter:     counter,
 		RemoteAddr:  "10.255.255.1:12345",
 		ServerConn:  serverProxy,
 		ErrorSignal: errSignal,
-		closeOnce:   sync.Once{},
-		log:         testLog(),
+		Ctx:         context.Background(),
+		CloseOnce:   sync.Once{},
+		Log:         testLog(),
 	}
 
-	go proxy.start()
+	go proxy.Start()
 
-	// The proxy uses a 30s dial timeout, but on many systems a non-routable
-	// IP produces "no route to host" much faster. Use a generous timeout.
 	select {
 	case <-errSignal:
-		// start() correctly signaled an error when dial failed
 	case <-time.After(35 * time.Second):
-		t.Fatal("TCPProxy.start() hung - no ErrorSignal received within 35s")
+		t.Fatal("TCPProxy.Start() hung - no ErrorSignal received within 35s")
 	}
 }
 
-func TestProxyCounter_Atomic(t *testing.T) {
-	// Verify that To/From use atomics by checking with LoadUint64 directly
-	counter := &ProxyCounter{}
+func TestCounter_Atomic(t *testing.T) {
+	counter := &Counter{}
 	counter.To(42)
 	counter.From(99)
 
@@ -281,38 +285,34 @@ func startEchoServer(t *testing.T) net.Listener {
 }
 
 func TestTCPProxy_Start_HappyPath(t *testing.T) {
-	// Start a local TCP echo server
 	ln := startEchoServer(t)
 	defer ln.Close()
 
-	// Create a pipe: clientEnd is "the client", serverProxy is TCPProxy.ServerConn
 	clientEnd, serverProxy := net.Pipe()
 
-	counter := &ProxyCounter{}
+	counter := &Counter{}
 	errSignal := make(chan bool, 1)
 	proxy := &TCPProxy{
 		Counter:     counter,
 		RemoteAddr:  ln.Addr().String(),
 		ServerConn:  serverProxy,
 		ErrorSignal: errSignal,
-		closeOnce:   sync.Once{},
-		log:         testLog(),
+		Ctx:         context.Background(),
+		CloseOnce:   sync.Once{},
+		Log:         testLog(),
 	}
 
-	// start() blocks on ErrorSignal internally, so track when it returns
 	startDone := make(chan struct{})
 	go func() {
-		proxy.start()
+		proxy.Start()
 		close(startDone)
 	}()
 
-	// Write test data through the pipe; the echo server will send it back
 	testMsg := []byte("hello echo server")
 	go func() {
 		clientEnd.Write(testMsg)
 	}()
 
-	// Read the echoed data back on the client side
 	buf := make([]byte, 1024)
 	n, err := clientEnd.Read(buf)
 	if err != nil {
@@ -322,28 +322,30 @@ func TestTCPProxy_Start_HappyPath(t *testing.T) {
 		t.Errorf("got %q, want %q", string(buf[:n]), "hello echo server")
 	}
 
-	// Close the client side to trigger connection teardown
+	deadline := time.After(5 * time.Second)
+	for {
+		to, from := counter.Total()
+		if to == 17 && from == 17 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("Timed out waiting for counters: to=%d, from=%d (want 17, 17)", to, from)
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
 	clientEnd.Close()
 
 	select {
 	case <-startDone:
-		// start() returned after handling the error
 	case <-time.After(5 * time.Second):
-		t.Fatal("Timed out waiting for start() to return")
-	}
-
-	// Verify byte counters: 17 bytes sent (To) and 17 bytes received (From)
-	to, from := counter.Total()
-	if to != 17 {
-		t.Errorf("To counter = %d, want 17", to)
-	}
-	if from != 17 {
-		t.Errorf("From counter = %d, want 17", from)
+		t.Fatal("Timed out waiting for Start() to return")
 	}
 }
 
 func TestTCPProxy_Start_RemoteRefused(t *testing.T) {
-	// Get a port that's definitely closed by listening then immediately closing
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Failed to listen: %v", err)
@@ -354,32 +356,32 @@ func TestTCPProxy_Start_RemoteRefused(t *testing.T) {
 	clientEnd, serverProxy := net.Pipe()
 	defer clientEnd.Close()
 
-	counter := &ProxyCounter{}
+	counter := &Counter{}
 	errSignal := make(chan bool, 1)
 	proxy := &TCPProxy{
 		Counter:     counter,
 		RemoteAddr:  addr,
 		ServerConn:  serverProxy,
 		ErrorSignal: errSignal,
-		closeOnce:   sync.Once{},
-		log:         testLog(),
+		Ctx:         context.Background(),
+		CloseOnce:   sync.Once{},
+		Log:         testLog(),
 	}
 
-	go proxy.start()
+	go proxy.Start()
 
 	select {
 	case <-errSignal:
-		// Connection refused was handled correctly
 	case <-time.After(5 * time.Second):
-		t.Fatal("TCPProxy.start() hung on connection refused")
+		t.Fatal("TCPProxy.Start() hung on connection refused")
 	}
 }
 
 func TestTCPProxy_Start_WithTLS(t *testing.T) {
-	// Load test CA and server certs
-	certFile := "contrib/testdata/certs/server.crt"
-	keyFile := "contrib/testdata/certs/server.key"
-	caFile := "contrib/testdata/certs/ca.crt"
+	root := projectRoot(t)
+	certFile := filepath.Join(root, "contrib/testdata/certs/server.crt")
+	keyFile := filepath.Join(root, "contrib/testdata/certs/server.key")
+	caFile := filepath.Join(root, "contrib/testdata/certs/ca.crt")
 
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
@@ -395,7 +397,6 @@ func TestTCPProxy_Start_WithTLS(t *testing.T) {
 		t.Fatal("Failed to add CA cert to pool")
 	}
 
-	// Start a TLS echo server
 	tlsConf := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 	}
@@ -414,10 +415,9 @@ func TestTCPProxy_Start_WithTLS(t *testing.T) {
 		io.Copy(conn, conn)
 	}()
 
-	// Create a pipe for the server side
 	clientEnd, serverProxy := net.Pipe()
 
-	counter := &ProxyCounter{}
+	counter := &Counter{}
 	errSignal := make(chan bool, 1)
 	proxy := &TCPProxy{
 		Counter:    counter,
@@ -428,18 +428,17 @@ func TestTCPProxy_Start_WithTLS(t *testing.T) {
 			ServerName: "localhost",
 		},
 		ErrorSignal: errSignal,
-		closeOnce:   sync.Once{},
-		log:         testLog(),
+		Ctx:         context.Background(),
+		CloseOnce:   sync.Once{},
+		Log:         testLog(),
 	}
 
-	// start() blocks on ErrorSignal internally, so track when it returns
 	startDone := make(chan struct{})
 	go func() {
-		proxy.start()
+		proxy.Start()
 		close(startDone)
 	}()
 
-	// Write test data; the TLS echo server echoes it back
 	testMsg := []byte("hello tls server")
 	go func() {
 		clientEnd.Write(testMsg)
@@ -454,50 +453,49 @@ func TestTCPProxy_Start_WithTLS(t *testing.T) {
 		t.Errorf("got %q, want %q", string(buf[:n]), "hello tls server")
 	}
 
-	// Close the client side to trigger teardown
+	deadline := time.After(5 * time.Second)
+	for {
+		to, from := counter.Total()
+		if to == 16 && from == 16 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("Timed out waiting for counters: to=%d, from=%d (want 16, 16)", to, from)
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
 	clientEnd.Close()
 
 	select {
 	case <-startDone:
-		// start() returned after handling the error
 	case <-time.After(5 * time.Second):
-		t.Fatal("Timed out waiting for start() to return")
-	}
-
-	// Verify byte counters: 16 bytes each way
-	to, from := counter.Total()
-	if to != 16 {
-		t.Errorf("To counter = %d, want 16", to)
-	}
-	if from != 16 {
-		t.Errorf("From counter = %d, want 16", from)
+		t.Fatal("Timed out waiting for Start() to return")
 	}
 }
 
 func TestTCPProxy_Pipe_WriteFail(t *testing.T) {
-	// Test that pipe() signals ErrorSignal when a write fails.
-	// Create connections where the destination is pre-closed.
 	serverClient, serverProxy := net.Pipe()
 	remoteProxy, remoteServer := net.Pipe()
 
-	counter := &ProxyCounter{}
+	counter := &Counter{}
 	errSignal := make(chan bool, 1)
 	proxy := &TCPProxy{
 		Counter:     counter,
 		ServerConn:  serverProxy,
 		RemoteConn:  remoteProxy,
 		ErrorSignal: errSignal,
-		closeOnce:   sync.Once{},
-		log:         testLog(),
+		Ctx:         context.Background(),
+		CloseOnce:   sync.Once{},
+		Log:         testLog(),
 	}
 
-	// Close the remote end so that writes to remoteProxy will fail
 	remoteServer.Close()
 
-	// Start only the server→remote pipe direction
-	go proxy.pipe(proxy.ServerConn, proxy.RemoteConn)
+	go proxy.Pipe(proxy.ServerConn, proxy.RemoteConn)
 
-	// Write data from the client side; pipe will read it then fail on write
 	go func() {
 		serverClient.Write([]byte("will fail"))
 		serverClient.Close()
@@ -505,8 +503,218 @@ func TestTCPProxy_Pipe_WriteFail(t *testing.T) {
 
 	select {
 	case <-errSignal:
-		// Write failure correctly signaled
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timed out waiting for ErrorSignal on write failure")
+	}
+}
+
+// panicConn is a net.Conn wrapper that panics on Read.
+type panicConn struct {
+	net.Conn
+}
+
+func (c *panicConn) Read(b []byte) (int, error) {
+	panic("intentional test panic in Read")
+}
+
+func TestTCPProxy_PipeRecovery(t *testing.T) {
+	_, serverProxy := net.Pipe()
+	remoteProxy, remoteServer := net.Pipe()
+	defer remoteServer.Close()
+
+	counter := &Counter{}
+	errSignal := make(chan bool, 1)
+	proxy := &TCPProxy{
+		Counter:     counter,
+		ServerConn:  serverProxy,
+		RemoteConn:  remoteProxy,
+		ErrorSignal: errSignal,
+		Ctx:         context.Background(),
+		CloseOnce:   sync.Once{},
+		Log:         testLog(),
+	}
+
+	go proxy.Pipe(&panicConn{Conn: serverProxy}, proxy.RemoteConn)
+
+	select {
+	case <-errSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for ErrorSignal after panic in pipe")
+	}
+}
+
+func TestTCPProxy_IdleTimeout(t *testing.T) {
+	ln := startEchoServer(t)
+	defer ln.Close()
+
+	serverLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to listen: %v", err)
+	}
+	defer serverLn.Close()
+
+	clientConn, err := net.Dial("tcp", serverLn.Addr().String())
+	if err != nil {
+		t.Fatalf("Failed to dial: %v", err)
+	}
+	defer clientConn.Close()
+
+	serverConn, err := serverLn.Accept()
+	if err != nil {
+		t.Fatalf("Failed to accept: %v", err)
+	}
+	defer serverConn.Close()
+
+	counter := &Counter{}
+	errSignal := make(chan bool, 1)
+	proxy := &TCPProxy{
+		Counter:     counter,
+		RemoteAddr:  ln.Addr().String(),
+		ServerConn:  serverConn,
+		ErrorSignal: errSignal,
+		Ctx:         context.Background(),
+		CloseOnce:   sync.Once{},
+		Log:         testLog(),
+		IdleTimeout: 100 * time.Millisecond,
+	}
+
+	startDone := make(chan struct{})
+	go func() {
+		proxy.Start()
+		close(startDone)
+	}()
+
+	select {
+	case <-startDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timed out waiting for idle timeout to close connection")
+	}
+}
+
+func TestTCPProxy_Pipe_ZeroTimeouts(t *testing.T) {
+	serverClient, serverProxy := net.Pipe()
+	remoteProxy, remoteServer := net.Pipe()
+
+	counter := &Counter{}
+	proxy := &TCPProxy{
+		Counter:      counter,
+		ServerConn:   serverProxy,
+		RemoteConn:   remoteProxy,
+		ErrorSignal:  make(chan bool, 1),
+		Ctx:          context.Background(),
+		CloseOnce:    sync.Once{},
+		Log:          testLog(),
+		ReadTimeout:  0,
+		WriteTimeout: 0,
+		IdleTimeout:  0,
+	}
+
+	go proxy.Pipe(proxy.ServerConn, proxy.RemoteConn)
+	go proxy.Pipe(proxy.RemoteConn, proxy.ServerConn)
+
+	testData := []byte("hello zero timeouts")
+	go func() {
+		serverClient.Write(testData)
+	}()
+
+	buf := make([]byte, 1024)
+	n, err := remoteServer.Read(buf)
+	if err != nil {
+		t.Fatalf("Read from remote failed: %v", err)
+	}
+	if string(buf[:n]) != "hello zero timeouts" {
+		t.Errorf("got %q, want %q", string(buf[:n]), "hello zero timeouts")
+	}
+
+	testData2 := []byte("reply zero timeouts")
+	go func() {
+		remoteServer.Write(testData2)
+	}()
+
+	buf2 := make([]byte, 1024)
+	n, err = serverClient.Read(buf2)
+	if err != nil {
+		t.Fatalf("Read from server failed: %v", err)
+	}
+	if string(buf2[:n]) != "reply zero timeouts" {
+		t.Errorf("got %q, want %q", string(buf2[:n]), "reply zero timeouts")
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		to, from := counter.Total()
+		if to == 19 && from == 19 {
+			break
+		}
+		select {
+		case <-deadline:
+			to, from := counter.Total()
+			t.Fatalf("Timed out waiting for counters: to=%d, from=%d (want 19, 19)", to, from)
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	serverClient.Close()
+	remoteServer.Close()
+
+	select {
+	case <-proxy.ErrorSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for ErrorSignal")
+	}
+}
+
+func TestSingleJoiningSlash(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want string
+	}{
+		{
+			name: "Both have slash",
+			a:    "http://example.com/",
+			b:    "/path",
+			want: "http://example.com/path",
+		},
+		{
+			name: "Neither has slash",
+			a:    "http://example.com",
+			b:    "path",
+			want: "http://example.com/path",
+		},
+		{
+			name: "Only a has slash",
+			a:    "http://example.com/",
+			b:    "path",
+			want: "http://example.com/path",
+		},
+		{
+			name: "Only b has slash",
+			a:    "http://example.com",
+			b:    "/path",
+			want: "http://example.com/path",
+		},
+		{
+			name: "Empty b",
+			a:    "http://example.com/",
+			b:    "",
+			want: "http://example.com/",
+		},
+		{
+			name: "Empty a",
+			a:    "",
+			b:    "/path",
+			want: "/path",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SingleJoiningSlash(tt.a, tt.b)
+			if got != tt.want {
+				t.Errorf("SingleJoiningSlash(%q, %q) = %q, want %q", tt.a, tt.b, got, tt.want)
+			}
+		})
 	}
 }

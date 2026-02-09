@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -9,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +19,119 @@ import (
 	kfile "github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 )
+
+// flagDesc maps flag names (dash-delimited) to human-readable descriptions.
+var flagDesc = map[string]string{
+	// General
+	"config": "Path to config file or directory",
+
+	// Server
+	"server-addr":                     "Listen address (host:port)",
+	"server-type":                     "Proxy mode: tcp, http, or https",
+	"server-healthcheck":              "Health check path (HTTP mode only, e.g. /healthz)",
+	"server-maxconns":                 "Max concurrent connections (0 = unlimited)",
+	"server-timeouts-read":            "Read timeout per connection (e.g. 30s, 5m)",
+	"server-timeouts-write":           "Write timeout per connection (e.g. 30s, 5m)",
+	"server-timeouts-idle":            "Idle timeout before closing connection (e.g. 5m, 1h)",
+	"server-tls-cert":                 "Path to server TLS certificate",
+	"server-tls-key":                  "Path to server TLS private key",
+	"server-tls-ca":                   "Path to CA cert for client verification",
+	"server-tls-require":              "Require client certificates",
+	"server-tls-verify":               "Require and verify client certificates",
+	"server-tls-letsencrypt-enable":   "Enable automatic Let's Encrypt certificates",
+	"server-tls-letsencrypt-domain":   "Domain for the Let's Encrypt certificate",
+	"server-tls-letsencrypt-cachedir": "Certificate cache directory",
+
+	// Remote
+	"remote-addr":        "Backend address (host:port for TCP, URL for HTTP)",
+	"remote-tls-enable":  "Use TLS when connecting to the backend",
+	"remote-tls-verify":  "Verify backend TLS certificate",
+	"remote-tls-cert":    "Client certificate for backend mTLS",
+	"remote-tls-key":     "Client key for backend mTLS",
+	"remote-tls-ca":      "Custom CA cert for backend verification",
+	"remote-tls-sysroots": "Include system CA roots for backend",
+
+	// Log
+	"log-level":       "Log level: debug, info, warn, error",
+	"log-contents":    "Log proxied data content (use with caution)",
+	"log-destination": "Log output: stdout, file path, or syslog://address",
+
+	// Metrics
+	"metrics-enable": "Enable Prometheus metrics endpoint",
+	"metrics-addr":   "Metrics server listen address (host:port)",
+	"metrics-path":   "Metrics endpoint path",
+}
+
+// flagGroup defines the display order and grouping for help output.
+type flagGroup struct {
+	name  string
+	flags []string
+}
+
+// helpGroups returns the ordered flag groups for the usage output.
+func helpGroups() []flagGroup {
+	return []flagGroup{
+		{
+			name: "General",
+			flags: []string{
+				"config",
+			},
+		},
+		{
+			name: "Server",
+			flags: []string{
+				"server-addr",
+				"server-type",
+				"server-healthcheck",
+				"server-maxconns",
+				"server-timeouts-read",
+				"server-timeouts-write",
+				"server-timeouts-idle",
+			},
+		},
+		{
+			name: "Server TLS",
+			flags: []string{
+				"server-tls-cert",
+				"server-tls-key",
+				"server-tls-ca",
+				"server-tls-require",
+				"server-tls-verify",
+				"server-tls-letsencrypt-enable",
+				"server-tls-letsencrypt-domain",
+				"server-tls-letsencrypt-cachedir",
+			},
+		},
+		{
+			name: "Remote",
+			flags: []string{
+				"remote-addr",
+				"remote-tls-enable",
+				"remote-tls-verify",
+				"remote-tls-cert",
+				"remote-tls-key",
+				"remote-tls-ca",
+				"remote-tls-sysroots",
+			},
+		},
+		{
+			name: "Logging",
+			flags: []string{
+				"log-level",
+				"log-contents",
+				"log-destination",
+			},
+		},
+		{
+			name: "Metrics",
+			flags: []string{
+				"metrics-enable",
+				"metrics-addr",
+				"metrics-path",
+			},
+		},
+	}
+}
 
 // ParseConfigPaths extracts -config values from raw args before flag.Parse runs.
 func ParseConfigPaths(args []string) []string {
@@ -75,7 +188,7 @@ func GetConfig(extraPaths ...string) (*koanf.Koanf, error) {
 	return k, nil
 }
 
-// loadConfigsFromDir loads all #tlspxy YAML files from a directory into k.
+// loadConfigsFromDir loads all YAML files (.yml, .yaml) from a directory into k.
 func loadConfigsFromDir(k *koanf.Koanf, dirname string) error {
 	files, err := os.ReadDir(dirname)
 	if err != nil {
@@ -83,10 +196,14 @@ func loadConfigsFromDir(k *koanf.Koanf, dirname string) error {
 	}
 
 	for _, f := range files {
-		path := filepath.Join(dirname, f.Name())
-		if !IsCfgFile(path) {
+		if f.IsDir() {
 			continue
 		}
+		name := f.Name()
+		if !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
+			continue
+		}
+		path := filepath.Join(dirname, name)
 		if err := loadConfigFile(k, path); err != nil {
 			return err
 		}
@@ -116,27 +233,44 @@ func LoadEnvVars(k *koanf.Koanf) {
 // Flag names use dashes as delimiters (e.g., -server-addr for server.addr).
 func LoadFlags(k *koanf.Koanf, appVersion, commitID string) {
 	// Register flags for all known config keys so flag.Parse recognizes them.
-	// Walk the default config to discover all keys and register them with
-	// the global flag set using their dash-delimited names.
 	RegisterFlags(DefaultConfig, "")
 
 	// Also register the -config flag so flag.Parse doesn't error on it.
-	// We already parsed it manually, so this is just to satisfy flag.Parse.
-	flag.String("config", "", "Path to config file or directory")
+	flag.String("config", "", flagDesc["config"])
 
 	flag.Usage = func() {
-		fmt.Println("Version:       ", appVersion, "| Commit", commitID)
-		fmt.Println("Description:    TLSpxy - Tiny TLS termination tool")
-		fmt.Println("Usage:          tlspxy [OPTIONS]")
-		fmt.Println("Options:")
-		PrettyPrintFlagMap(k.Raw())
-		fmt.Println("All options can be set via flags, environment variables, or configuration files.",
-			"\n  -> See https://github.com/colebrumley/tlspxy/wiki/Configuration for details.")
+		fmt.Println("tlspxy — TLS-terminating TCP and HTTP reverse proxy")
+		fmt.Println()
+		if appVersion != "" || commitID != "" {
+			fmt.Printf("  Version:  %s (commit %s)\n", appVersion, commitID)
+			fmt.Println()
+		}
+		fmt.Println("Usage:")
+		fmt.Println("  tlspxy [OPTIONS]")
+		fmt.Println()
+		printGroupedHelp()
+		fmt.Println("Configuration is loaded in layers (each overrides the previous):")
+		fmt.Println("  1. Built-in defaults")
+		fmt.Println("  2. YAML files in working directory (auto-discovered)")
+		fmt.Println("  3. YAML files/directories specified via -config")
+		fmt.Println("  4. Environment variables (TLSPXY_ prefix)")
+		fmt.Println("  5. CLI flags")
+		fmt.Println()
+		fmt.Println("See https://github.com/colebrumley/tlspxy for documentation.")
 	}
 
 	flag.Parse()
 
-	k.Load(basicflag.Provider(flag.CommandLine, "."), nil)
+	// Use ProviderWithValue to convert dash-delimited flag names to
+	// dot-delimited koanf keys (e.g., "server-addr" → "server.addr").
+	k.Load(basicflag.ProviderWithValue(flag.CommandLine, ".", func(key string, value string) (string, interface{}) {
+		// Skip the "config" flag — it's handled separately.
+		if key == "config" {
+			return "", nil
+		}
+		koanfKey := strings.ReplaceAll(key, "-", ".")
+		return koanfKey, value
+	}, k), nil)
 }
 
 // RegisterFlags recursively registers flags for all leaf values in the config map.
@@ -146,29 +280,59 @@ func RegisterFlags(m map[string]interface{}, prefix string) {
 		if prefix != "" {
 			flagName = prefix + "-" + key
 		}
-		koanfKey := key
-		if prefix != "" {
-			koanfKey = strings.Replace(prefix, "-", ".", -1) + "." + key
-		}
+		desc := flagDesc[flagName]
 		switch v := val.(type) {
 		case map[string]interface{}:
 			RegisterFlags(v, flagName)
 		case string:
-			flag.String(flagName, v, koanfKey)
+			flag.String(flagName, v, desc)
 		case bool:
-			flag.Bool(flagName, v, koanfKey)
+			flag.Bool(flagName, v, desc)
 		case int:
-			flag.Int(flagName, v, koanfKey)
+			flag.Int(flagName, v, desc)
 		}
+	}
+}
+
+// printGroupedHelp prints flags organized by section with descriptions.
+func printGroupedHelp() {
+	registered := make(map[string]*flag.Flag)
+	flag.VisitAll(func(f *flag.Flag) {
+		registered[f.Name] = f
+	})
+
+	for _, group := range helpGroups() {
+		fmt.Printf("  %s:\n", group.name)
+		for _, name := range group.flags {
+			desc := flagDesc[name]
+			f := registered[name]
+			if f != nil {
+				defVal := f.DefValue
+				if defVal == "" {
+					defVal = `""`
+				}
+				fmt.Printf("    -%-38s %s (default: %s)\n", name, desc, defVal)
+			} else {
+				fmt.Printf("    -%-38s %s\n", name, desc)
+			}
+		}
+		fmt.Println()
 	}
 }
 
 // PrettyPrintFlagMap prints flags in a human-readable format for usage output.
 func PrettyPrintFlagMap(m map[string]interface{}, prefix ...string) {
-	for k, v := range m {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := m[k]
 		flagName := "-" + k
 		if len(prefix) > 0 {
-			flagName = "-" + strings.Join(prefix, "-") + flagName
+			flagName = "-" + strings.Join(prefix, "-") + "-" + k
 		}
 		switch v.(type) {
 		case string, int, bool:
@@ -179,20 +343,14 @@ func PrettyPrintFlagMap(m map[string]interface{}, prefix ...string) {
 	}
 }
 
-// IsCfgFile checks if the file at path is a valid tlspxy config file
-// (starts with #tlspxy).
+// IsCfgFile reports whether path is a YAML config file (.yml or .yaml).
 func IsCfgFile(path string) bool {
-	file, err := os.Open(path)
-	if err != nil {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != ".yml" && ext != ".yaml" {
 		return false
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	if scanner.Scan() && scanner.Text() == "#tlspxy" {
-		return true
-	}
-	return false
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // ValidateConfig checks that the loaded configuration is valid and returns
@@ -207,13 +365,13 @@ func ValidateConfig(k *koanf.Koanf) error {
 	case "tcp", "http", "https":
 		// ok
 	default:
-		return fmt.Errorf("server.type: must be one of tcp, http, https; got %q", serverType)
+		return fmt.Errorf("server.type must be one of tcp, http, https; got %q\n  set via: -server-type, TLSPXY_SERVER_TYPE, or server.type in config", serverType)
 	}
 
 	// 2. remote.addr must be non-empty
 	remoteAddr := k.String("remote.addr")
 	if remoteAddr == "" {
-		return fmt.Errorf("remote.addr: must not be empty")
+		return fmt.Errorf("remote.addr is required\n  set the backend address, e.g. -remote-addr 127.0.0.1:8080\n  or TLSPXY_REMOTE_ADDR, or remote.addr in config")
 	}
 
 	// 3. server.addr must be a valid TCP address
@@ -222,24 +380,24 @@ func ValidateConfig(k *koanf.Koanf) error {
 		serverAddr = ":9898"
 	}
 	if _, err := net.ResolveTCPAddr("tcp", serverAddr); err != nil {
-		return fmt.Errorf("server.addr: invalid TCP address %q: %v", serverAddr, err)
+		return fmt.Errorf("server.addr: invalid TCP address %q: %v\n  expected host:port, e.g. :8443 or 0.0.0.0:8443", serverAddr, err)
 	}
 
 	// 4. TLS cert and key must both be set or both be empty
 	tlsCert := k.String("server.tls.cert")
 	tlsKey := k.String("server.tls.key")
 	if tlsCert != "" && tlsKey == "" {
-		return fmt.Errorf("server.tls.key: must be set when server.tls.cert is set")
+		return fmt.Errorf("server.tls.key is required when server.tls.cert is set\n  set via: -server-tls-key or TLSPXY_SERVER_TLS_KEY")
 	}
 	if tlsKey != "" && tlsCert == "" {
-		return fmt.Errorf("server.tls.cert: must be set when server.tls.key is set")
+		return fmt.Errorf("server.tls.cert is required when server.tls.key is set\n  set via: -server-tls-cert or TLSPXY_SERVER_TLS_CERT")
 	}
 
 	// 5. If letsencrypt is enabled, domain must be non-empty
 	if k.Bool("server.tls.letsencrypt.enable") {
 		domain := k.String("server.tls.letsencrypt.domain")
 		if domain == "" {
-			return fmt.Errorf("server.tls.letsencrypt.domain: must not be empty when server.tls.letsencrypt.enable is true")
+			return fmt.Errorf("server.tls.letsencrypt.domain is required when Let's Encrypt is enabled\n  set via: -server-tls-letsencrypt-domain or TLSPXY_SERVER_TLS_LETSENCRYPT_DOMAIN")
 		}
 	}
 
@@ -247,10 +405,10 @@ func ValidateConfig(k *koanf.Koanf) error {
 	if serverType == "http" || serverType == "https" {
 		u, err := url.Parse(remoteAddr)
 		if err != nil {
-			return fmt.Errorf("remote.addr: must be a valid URL for server.type %q: %v", serverType, err)
+			return fmt.Errorf("remote.addr must be a valid URL for server.type %q: %v\n  e.g. http://127.0.0.1:8080", serverType, err)
 		}
 		if u.Scheme == "" || u.Host == "" {
-			return fmt.Errorf("remote.addr: must be a valid URL with scheme and host for server.type %q; got %q", serverType, remoteAddr)
+			return fmt.Errorf("remote.addr must include scheme and host for server.type %q; got %q\n  e.g. http://127.0.0.1:8080 or https://backend.example.com", serverType, remoteAddr)
 		}
 	}
 
@@ -258,9 +416,16 @@ func ValidateConfig(k *koanf.Koanf) error {
 	for _, key := range []string{"server.timeouts.read", "server.timeouts.write", "server.timeouts.idle"} {
 		if v := k.String(key); v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
-				return fmt.Errorf("%s: invalid duration %q: %v", key, v, err)
+				flagName := strings.ReplaceAll(key, ".", "-")
+				return fmt.Errorf("%s: invalid duration %q: %v\n  expected Go duration, e.g. 30s, 5m, 1h\n  set via: -%s", key, v, err, flagName)
 			}
 		}
+	}
+
+	// 8. Normalize "warning" log level to "warn"
+	logLevel := k.String("log.level")
+	if strings.EqualFold(logLevel, "warning") {
+		k.Set("log.level", "warn")
 	}
 
 	return nil

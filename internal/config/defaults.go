@@ -20,7 +20,7 @@ var DefaultConfig = map[string]interface{}{
 			"ca":      "",
 			"letsencrypt": map[string]interface{}{
 				"enable":   false,
-				"domain":   "example.org",
+				"domain":   "",
 				"cachedir": "/tmp/letsencrypt",
 			},
 		},

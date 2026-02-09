@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -21,8 +23,6 @@ import (
 	"github.com/colebrumley/tlspxy/internal/proxy"
 	sighandler "github.com/colebrumley/tlspxy/internal/signal"
 	tlsconfig "github.com/colebrumley/tlspxy/internal/tls"
-
-	goyaml "gopkg.in/yaml.v2"
 )
 
 // AppVersion is the global application version
@@ -32,6 +32,14 @@ var AppVersion string
 var CommitID string
 
 func main() {
+	// Provide sensible defaults when ldflags are not set.
+	if AppVersion == "" {
+		AppVersion = "dev"
+	}
+	if CommitID == "" {
+		CommitID = "unknown"
+	}
+
 	// Check for -version/--version before anything else
 	for _, arg := range os.Args[1:] {
 		if arg == "-version" || arg == "--version" {
@@ -64,8 +72,15 @@ func main() {
 	config.LoadEnvVars(k)
 	config.LoadFlags(k, AppVersion, CommitID)
 
+	// If no meaningful config was provided (remote.addr still empty and no
+	// flags/env/config set), show help instead of a cryptic validation error.
+	if k.String("remote.addr") == "" && len(configPaths) == 0 && flag.NFlag() == 0 {
+		flag.Usage()
+		os.Exit(0)
+	}
+
 	if err := config.ValidateConfig(k); err != nil {
-		slog.Error("Invalid config", "error", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -84,7 +99,7 @@ func main() {
 	}
 
 	// Print the loaded config if debug is on
-	c, _ := goyaml.Marshal(k.Raw())
+	c, _ := json.MarshalIndent(k.Raw(), "", "  ")
 	slog.Debug("Loaded config", "config", string(c))
 
 	// Parse the Server listener config

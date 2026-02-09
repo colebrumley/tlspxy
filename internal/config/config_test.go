@@ -14,9 +14,9 @@ import (
 )
 
 func TestGetConfig(t *testing.T) {
-	// GetConfig reads YAML files from the current working directory that
-	// have "#tlspxy" as the first line. We create a temp dir, write a
-	// config file, cd into that dir, call GetConfig, then restore cwd.
+	// GetConfig reads all .yml/.yaml files from the current working directory.
+	// We create a temp dir, write a config file, cd into that dir, call
+	// GetConfig, then restore cwd.
 	origDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -29,8 +29,8 @@ func TestGetConfig(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Write a valid config file with #tlspxy header
-	cfgContent := "#tlspxy\nremote:\n  addr: example.com:443\n"
+	// Write a valid YAML config file (no #tlspxy header required)
+	cfgContent := "remote:\n  addr: example.com:443\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, "test.yml"), []byte(cfgContent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +89,94 @@ func TestGetConfig_NoFiles(t *testing.T) {
 	serverAddr := gotK.String("server.addr")
 	if serverAddr != ":9898" {
 		t.Errorf("server.addr = %q, want %q", serverAddr, ":9898")
+	}
+}
+
+func TestGetConfig_NonYAMLIgnored(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	tmpDir, err := os.MkdirTemp("", "tlspxy-config-nonyaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Write a .txt file that should be ignored
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.txt"), []byte("remote:\n  addr: bad\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Write a .json file that should also be ignored
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), []byte(`{"remote":{"addr":"bad"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	gotK, err := GetConfig()
+	if err != nil {
+		t.Fatalf("GetConfig() returned error: %v", err)
+	}
+
+	// remote.addr should still be the default (empty) since no YAML files were loaded
+	addr := gotK.String("remote.addr")
+	if addr != "" {
+		t.Errorf("remote.addr = %q, want empty (non-YAML files should be ignored)", addr)
+	}
+}
+
+func TestGetConfig_ExtraPaths(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// Create an empty working directory so no configs are auto-loaded
+	emptyDir, err := os.MkdirTemp("", "tlspxy-config-empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(emptyDir)
+
+	// Create a directory with a config file to pass via extraPaths
+	extraDir, err := os.MkdirTemp("", "tlspxy-config-extra")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(extraDir)
+
+	cfgContent := "remote:\n  addr: extra-host:9999\n"
+	cfgPath := filepath.Join(extraDir, "extra.yml")
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chdir(emptyDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test passing a file path
+	gotK, err := GetConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("GetConfig(file) returned error: %v", err)
+	}
+	if addr := gotK.String("remote.addr"); addr != "extra-host:9999" {
+		t.Errorf("remote.addr = %q, want %q", addr, "extra-host:9999")
+	}
+
+	// Test passing a directory
+	gotK2, err := GetConfig(extraDir)
+	if err != nil {
+		t.Fatalf("GetConfig(dir) returned error: %v", err)
+	}
+	if addr := gotK2.String("remote.addr"); addr != "extra-host:9999" {
+		t.Errorf("remote.addr = %q, want %q", addr, "extra-host:9999")
 	}
 }
 
@@ -165,60 +253,67 @@ func newTestKoanf(m map[string]interface{}) *koanf.Koanf {
 }
 
 func TestIsCfgFile(t *testing.T) {
-	type args struct {
-		path string
+	tmpDir, err := os.MkdirTemp("", "tlspxy-iscfg-test")
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create test files
+	ymlFile := filepath.Join(tmpDir, "config.yml")
+	yamlFile := filepath.Join(tmpDir, "config.yaml")
+	txtFile := filepath.Join(tmpDir, "config.txt")
+	jsonFile := filepath.Join(tmpDir, "config.json")
+
+	for _, f := range []string{ymlFile, yamlFile, txtFile, jsonFile} {
+		if err := os.WriteFile(f, []byte("test"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	tests := []struct {
 		name string
-		args args
+		path string
 		want bool
 	}{
 		{
-			name: "Valid header",
-			args: args{path: "contrib/testdata/config/isCfgFile_true.yml"},
+			name: ".yml extension",
+			path: ymlFile,
 			want: true,
 		},
 		{
-			name: "No header",
-			args: args{path: "contrib/testdata/config/isCfgFile_false.yml"},
+			name: ".yaml extension",
+			path: yamlFile,
+			want: true,
+		},
+		{
+			name: ".txt extension",
+			path: txtFile,
 			want: false,
 		},
 		{
-			name: "Invalid header",
-			args: args{path: "contrib/testdata/config/isCfgFile_invalid.yml"},
+			name: ".json extension",
+			path: jsonFile,
 			want: false,
 		},
 		{
-			name: "Missing file",
-			args: args{path: "contrib/testdata/config/isCfgFile.yml"},
+			name: "missing file with .yml extension",
+			path: filepath.Join(tmpDir, "nonexistent.yml"),
+			want: false,
+		},
+		{
+			name: "missing file with .yaml extension",
+			path: filepath.Join(tmpDir, "nonexistent.yaml"),
 			want: false,
 		},
 	}
-
-	// IsCfgFile opens files relative to cwd, so make sure we're in the project root
-	origDir, _ := os.Getwd()
-	defer os.Chdir(origDir)
-
-	// Find project root by looking for go.mod
-	dir := origDir
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("could not find project root")
-		}
-		dir = parent
-	}
-	os.Chdir(dir)
 
 	for _, tt := range tests {
-		if got := IsCfgFile(tt.args.path); got != tt.want {
-			t.Errorf("%q. IsCfgFile() = %v, want %v", tt.name, got, tt.want)
-		} else {
-			t.Logf("%q. IsCfgFile() = %v, want %v", tt.name, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsCfgFile(tt.path); got != tt.want {
+				t.Errorf("IsCfgFile(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -234,7 +329,7 @@ func TestValidateConfig(t *testing.T) {
 					"key":  "",
 					"letsencrypt": map[string]interface{}{
 						"enable": false,
-						"domain": "example.org",
+						"domain": "",
 					},
 				},
 			},
@@ -632,6 +727,116 @@ func TestLoadEnvVars(t *testing.T) {
 		// If any key looks like it was derived from REMOTE_ADDR without prefix, fail.
 		if val == "should-not-appear" {
 			t.Errorf("un-prefixed env var leaked into config key %q", key)
+		}
+	}
+}
+
+func TestParseConfigPaths(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "no config flags",
+			args: []string{"-server-addr", ":8080"},
+			want: nil,
+		},
+		{
+			name: "single -config with space",
+			args: []string{"-config", "/etc/tlspxy.yml"},
+			want: []string{"/etc/tlspxy.yml"},
+		},
+		{
+			name: "single --config with space",
+			args: []string{"--config", "/etc/tlspxy.yml"},
+			want: []string{"/etc/tlspxy.yml"},
+		},
+		{
+			name: "single -config= form",
+			args: []string{"-config=/etc/tlspxy.yml"},
+			want: []string{"/etc/tlspxy.yml"},
+		},
+		{
+			name: "single --config= form",
+			args: []string{"--config=/etc/tlspxy.yml"},
+			want: []string{"/etc/tlspxy.yml"},
+		},
+		{
+			name: "multiple -config flags",
+			args: []string{"-config", "/etc/a.yml", "-config", "/etc/b.yml"},
+			want: []string{"/etc/a.yml", "/etc/b.yml"},
+		},
+		{
+			name: "mixed with other flags",
+			args: []string{"-server-addr", ":8080", "-config", "/etc/tlspxy.yml", "-remote-addr", "host:443"},
+			want: []string{"/etc/tlspxy.yml"},
+		},
+		{
+			name: "-config at end with no value",
+			args: []string{"-config"},
+			want: nil,
+		},
+		{
+			name: "empty args",
+			args: []string{},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseConfigPaths(tt.args)
+			if len(got) != len(tt.want) {
+				t.Fatalf("ParseConfigPaths(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("ParseConfigPaths(%v)[%d] = %q, want %q", tt.args, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestFlagDescCompleteness(t *testing.T) {
+	// Verify that every leaf key in DefaultConfig has a corresponding entry
+	// in the flagDesc map.
+	var walkDefaults func(m map[string]interface{}, prefix string)
+	walkDefaults = func(m map[string]interface{}, prefix string) {
+		for key, val := range m {
+			flagName := key
+			if prefix != "" {
+				flagName = prefix + "-" + key
+			}
+			switch v := val.(type) {
+			case map[string]interface{}:
+				walkDefaults(v, flagName)
+			default:
+				if _, ok := flagDesc[flagName]; !ok {
+					t.Errorf("DefaultConfig leaf key %q has no entry in flagDesc", flagName)
+				}
+			}
+		}
+	}
+	walkDefaults(DefaultConfig, "")
+}
+
+func TestHelpGroupsCoversAllFlags(t *testing.T) {
+	// Verify that every flag in flagDesc appears in exactly one help group.
+	inGroup := make(map[string]bool)
+	for _, group := range helpGroups() {
+		for _, name := range group.flags {
+			if inGroup[name] {
+				t.Errorf("flag %q appears in multiple help groups", name)
+			}
+			inGroup[name] = true
+		}
+	}
+
+	for name := range flagDesc {
+		if !inGroup[name] {
+			t.Errorf("flagDesc entry %q is not in any help group", name)
 		}
 	}
 }

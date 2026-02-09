@@ -11,7 +11,6 @@ require (
 	github.com/knadh/koanf/v2 v2.3.2
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/crypto v0.47.0
-	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (

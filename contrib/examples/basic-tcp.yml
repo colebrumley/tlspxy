@@ -1,0 +1,27 @@
+#tlspxy — Minimal TCP proxy with TLS termination
+#
+# Terminates TLS on the proxy and forwards plain TCP to the backend.
+# Use this as a starting point for TCP-based proxying.
+
+server:
+  # Listen address for incoming connections
+  addr: ":8443"
+  # Proxy mode: tcp, http, or https
+  type: tcp
+  # Maximum concurrent connections (0 = unlimited)
+  maxconns: 0
+  tls:
+    # Path to the server certificate (PEM format)
+    cert: /etc/tlspxy/server.crt
+    # Path to the server private key (PEM format)
+    key: /etc/tlspxy/server.key
+
+remote:
+  # Backend address to forward connections to
+  addr: "127.0.0.1:8080"
+  tls:
+    # Disable TLS to the backend (plain TCP)
+    enable: false
+
+log:
+  level: info

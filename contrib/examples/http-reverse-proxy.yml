@@ -1,0 +1,30 @@
+#tlspxy — HTTP reverse proxy with health check
+#
+# Runs as an HTTP reverse proxy with TLS termination and a
+# health check endpoint for load balancer integration.
+
+server:
+  # Listen address for incoming HTTPS connections
+  addr: ":443"
+  # HTTP reverse proxy mode
+  type: https
+  # Health check path — returns 200 OK without hitting the backend
+  healthcheck: /healthz
+  # Limit concurrent connections
+  maxconns: 1000
+  tls:
+    cert: /etc/tlspxy/server.crt
+    key: /etc/tlspxy/server.key
+  timeouts:
+    read: 30s
+    write: 30s
+    idle: 120s
+
+remote:
+  # Backend URL (must include scheme for http/https modes)
+  addr: "http://127.0.0.1:8080"
+  tls:
+    enable: false
+
+log:
+  level: info

@@ -37,7 +37,7 @@ func (shm *SigHandlerMux) AddHandler(fn func(), sigs ...os.Signal) {
 // cleanup callbacks before exiting.
 func (shm *SigHandlerMux) WatchForSignals() {
 	signals := make(chan os.Signal, 1)
-	ossignal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	ossignal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	for {
 		select {
 		case s := <-signals:

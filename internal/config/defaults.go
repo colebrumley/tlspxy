@@ -7,17 +7,22 @@ var DefaultConfig = map[string]interface{}{
 		"type":        "tcp",
 		"healthcheck": "",
 		"maxconns":    0, // 0 means unlimited
+		"http2":       false,
 		"timeouts": map[string]interface{}{
 			"read":  "0s",
 			"write": "0s",
 			"idle":  "300s",
 		},
 		"tls": map[string]interface{}{
-			"verify":  false,
-			"require": false,
-			"cert":    "",
-			"key":     "",
-			"ca":      "",
+			"verify":       false,
+			"require":      false,
+			"cert":         "",
+			"key":          "",
+			"ca":           "",
+			"minversion":   "",
+			"maxversion":   "",
+			"ciphersuites": "",
+			"alpn":         "",
 			"letsencrypt": map[string]interface{}{
 				"enable":   false,
 				"domain":   "",
@@ -28,12 +33,16 @@ var DefaultConfig = map[string]interface{}{
 	"remote": map[string]interface{}{
 		"addr": "",
 		"tls": map[string]interface{}{
-			"enable":   true,
-			"verify":   true,
-			"cert":     "",
-			"key":      "",
-			"ca":       "",
-			"sysroots": true,
+			"enable":       true,
+			"verify":       true,
+			"cert":         "",
+			"key":          "",
+			"ca":           "",
+			"sysroots":     true,
+			"minversion":   "",
+			"maxversion":   "",
+			"ciphersuites": "",
+			"alpn":         "",
 		},
 	},
 	"log": map[string]interface{}{
@@ -41,6 +50,7 @@ var DefaultConfig = map[string]interface{}{
 		"contents":    false,
 		"destination": "stdout",
 	},
+	"validate": false,
 	"metrics": map[string]interface{}{
 		"enable": false,
 		"addr":   ":9090",

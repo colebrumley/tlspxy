@@ -542,6 +542,87 @@ func TestValidateConfig(t *testing.T) {
 			},
 			wantErr: "server.timeouts.idle",
 		},
+		{
+			name: "valid TLS version",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{
+					"tls": map[string]interface{}{
+						"minversion": "1.2",
+						"maxversion": "1.3",
+					},
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name: "invalid server TLS minversion",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{
+					"tls": map[string]interface{}{
+						"minversion": "2.0",
+					},
+				},
+			},
+			wantErr: "server.tls.minversion",
+		},
+		{
+			name: "server.http2 with tcp is invalid",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{
+					"type":  "tcp",
+					"http2": true,
+				},
+			},
+			wantErr: "server.http2",
+		},
+		{
+			name: "server.http2 with http is valid",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{
+					"type":  "http",
+					"http2": true,
+				},
+				"remote": map[string]interface{}{
+					"addr": "http://localhost:8080",
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name: "invalid remote TLS maxversion",
+			overrides: map[string]interface{}{
+				"remote": map[string]interface{}{
+					"addr": "localhost:8080",
+					"tls": map[string]interface{}{
+						"maxversion": "bogus",
+					},
+				},
+			},
+			wantErr: "remote.tls.maxversion",
+		},
+		{
+			name: "invalid cipher suite",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{
+					"tls": map[string]interface{}{
+						"ciphersuites": "BOGUS_CIPHER",
+					},
+				},
+			},
+			wantErr: "server.tls.ciphersuites",
+		},
+		{
+			name: "min version > max version",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{
+					"tls": map[string]interface{}{
+						"minversion": "1.3",
+						"maxversion": "1.2",
+					},
+				},
+			},
+			wantErr: "server.tls.minversion",
+		},
 	}
 
 	for _, tt := range tests {
@@ -838,6 +919,59 @@ func TestHelpGroupsCoversAllFlags(t *testing.T) {
 		if !inGroup[name] {
 			t.Errorf("flagDesc entry %q is not in any help group", name)
 		}
+	}
+}
+
+func TestExampleConfigs(t *testing.T) {
+	root := projectRoot(t)
+	pattern := filepath.Join(root, "contrib/examples/*.yml")
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		t.Fatalf("Glob(%q) error: %v", pattern, err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no example configs found")
+	}
+
+	for _, f := range files {
+		t.Run(filepath.Base(f), func(t *testing.T) {
+			// Verify #tlspxy header
+			data, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatalf("ReadFile(%q) error: %v", f, err)
+			}
+			if !strings.HasPrefix(string(data), "#tlspxy") {
+				t.Errorf("example %s does not start with #tlspxy header", filepath.Base(f))
+			}
+
+			// Verify it parses without error when merged with defaults
+			k := koanf.New(".")
+			if err := k.Load(confmap.Provider(DefaultConfig, "."), nil); err != nil {
+				t.Fatalf("loading defaults: %v", err)
+			}
+			if err := loadConfigFile(k, f); err != nil {
+				t.Fatalf("loading %s: %v", filepath.Base(f), err)
+			}
+		})
+	}
+}
+
+// projectRoot finds the project root by looking for go.mod.
+func projectRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("could not find project root")
+		}
+		dir = parent
 	}
 }
 

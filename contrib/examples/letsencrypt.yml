@@ -1,0 +1,27 @@
+#tlspxy — Let's Encrypt automated certificates
+#
+# Automatically obtains and renews TLS certificates from Let's Encrypt.
+# The proxy must be reachable on port 443 for ACME challenges.
+
+server:
+  addr: ":443"
+  type: https
+  healthcheck: /healthz
+  tls:
+    letsencrypt:
+      # Enable automatic certificate management
+      enable: true
+      # Domain to obtain a certificate for
+      domain: proxy.example.com
+      # Optional: email for expiry notifications
+      email: admin@example.com
+      # Directory to cache certificates (must be writable)
+      cachedir: /var/lib/tlspxy/certs
+
+remote:
+  addr: "http://127.0.0.1:8080"
+  tls:
+    enable: false
+
+log:
+  level: info

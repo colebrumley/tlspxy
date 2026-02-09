@@ -23,6 +23,7 @@ func TestConfigRemote_DefaultTLS(t *testing.T) {
 			"tls": map[string]interface{}{
 				"enable": true, "verify": false,
 				"cert": "", "key": "", "ca": "", "sysroots": false,
+				"minversion": "", "maxversion": "", "ciphersuites": "", "alpn": "",
 			},
 		},
 	})
@@ -48,6 +49,7 @@ func TestConfigRemote_WithCertKey(t *testing.T) {
 				"key":  filepath.Join(root, "contrib/testdata/certs/proxy.key"),
 				"ca":   filepath.Join(root, "contrib/testdata/certs/ca.crt"),
 				"sysroots": false,
+				"minversion": "", "maxversion": "", "ciphersuites": "", "alpn": "",
 			},
 		},
 	})
@@ -72,6 +74,7 @@ func TestConfigRemote_VerifyWithSysRoots(t *testing.T) {
 			"tls": map[string]interface{}{
 				"enable": true, "verify": true,
 				"cert": "", "key": "", "ca": "", "sysroots": true,
+				"minversion": "", "maxversion": "", "ciphersuites": "", "alpn": "",
 			},
 		},
 	})
@@ -96,6 +99,7 @@ func TestConfigRemote_Disabled(t *testing.T) {
 			"tls": map[string]interface{}{
 				"enable": false, "verify": false,
 				"cert": "", "key": "", "ca": "", "sysroots": false,
+				"minversion": "", "maxversion": "", "ciphersuites": "", "alpn": "",
 			},
 		},
 	})
@@ -114,6 +118,7 @@ func TestConfigRemote_InsecureSkipVerify(t *testing.T) {
 			"tls": map[string]interface{}{
 				"enable": true, "verify": false,
 				"cert": "", "key": "", "ca": "", "sysroots": false,
+				"minversion": "", "maxversion": "", "ciphersuites": "", "alpn": "",
 			},
 		},
 	})
@@ -139,6 +144,7 @@ func TestConfigRemote_WithCertKeyAndVerify(t *testing.T) {
 				"key":  filepath.Join(root, "contrib/testdata/certs/proxy.key"),
 				"ca":   filepath.Join(root, "contrib/testdata/certs/ca.crt"),
 				"sysroots": true,
+				"minversion": "", "maxversion": "", "ciphersuites": "", "alpn": "",
 			},
 		},
 	})
@@ -170,6 +176,7 @@ func TestConfigRemote_WithCertKeyNoVerify(t *testing.T) {
 				"key":  filepath.Join(root, "contrib/testdata/certs/proxy.key"),
 				"ca":   filepath.Join(root, "contrib/testdata/certs/ca.crt"),
 				"sysroots": false,
+				"minversion": "", "maxversion": "", "ciphersuites": "", "alpn": "",
 			},
 		},
 	})
@@ -194,6 +201,7 @@ func TestConfigRemote_VerifyNoSysRoots(t *testing.T) {
 			"tls": map[string]interface{}{
 				"enable": true, "verify": true,
 				"cert": "", "key": "", "ca": "", "sysroots": false,
+				"minversion": "", "maxversion": "", "ciphersuites": "", "alpn": "",
 			},
 		},
 	})

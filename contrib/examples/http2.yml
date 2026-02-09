@@ -1,0 +1,29 @@
+#tlspxy — HTTP/2 with TLS backend
+#
+# Enables HTTP/2 on both the server and the upstream connection.
+# ALPN negotiation advertises h2 and http/1.1 to clients.
+
+server:
+  addr: ":443"
+  type: https
+  # Enable HTTP/2 support (server and upstream transport)
+  http2: true
+  healthcheck: /healthz
+  tls:
+    cert: /etc/tlspxy/server.crt
+    key: /etc/tlspxy/server.key
+    # Advertise HTTP/2 and HTTP/1.1 via ALPN
+    alpn: "h2,http/1.1"
+
+remote:
+  # Backend that also speaks HTTP/2
+  addr: "https://backend.internal:8443"
+  tls:
+    enable: true
+    verify: true
+    sysroots: true
+    # Advertise HTTP/2 to the backend
+    alpn: "h2,http/1.1"
+
+log:
+  level: info

@@ -32,7 +32,7 @@ func TestLoadConfigFromFiles(t *testing.T) {
 	keyFile := filepath.Join(root, "contrib/testdata/certs/proxy.key")
 	caFile := filepath.Join(root, "contrib/testdata/certs/ca.crt")
 
-	tlsConf, err := LoadConfigFromFiles(certFile, keyFile, caFile, false)
+	tlsConf, err := LoadConfigFromFiles(certFile, keyFile, caFile, false, TLSOptions{})
 	if err != nil {
 		t.Fatalf("LoadConfigFromFiles() error = %v", err)
 	}
@@ -70,7 +70,7 @@ func TestLoadConfigFromFiles_WithSystemRoots(t *testing.T) {
 	keyFile := filepath.Join(root, "contrib/testdata/certs/proxy.key")
 
 	// Load with system roots and no CA file
-	tlsConf, err := LoadConfigFromFiles(certFile, keyFile, "", true)
+	tlsConf, err := LoadConfigFromFiles(certFile, keyFile, "", true, TLSOptions{})
 	if err != nil {
 		t.Fatalf("LoadConfigFromFiles() error = %v", err)
 	}
@@ -84,7 +84,7 @@ func TestLoadConfigFromFiles_WithSystemRoots(t *testing.T) {
 
 func TestLoadConfigFromFiles_MissingCert(t *testing.T) {
 	root := projectRoot(t)
-	_, err := LoadConfigFromFiles("nonexistent.crt", filepath.Join(root, "contrib/testdata/certs/proxy.key"), filepath.Join(root, "contrib/testdata/certs/ca.crt"), false)
+	_, err := LoadConfigFromFiles("nonexistent.crt", filepath.Join(root, "contrib/testdata/certs/proxy.key"), filepath.Join(root, "contrib/testdata/certs/ca.crt"), false, TLSOptions{})
 	if err == nil {
 		t.Error("Expected error for missing cert file, got nil")
 	}
@@ -92,14 +92,14 @@ func TestLoadConfigFromFiles_MissingCert(t *testing.T) {
 
 func TestLoadConfigFromFiles_MissingKey(t *testing.T) {
 	root := projectRoot(t)
-	_, err := LoadConfigFromFiles(filepath.Join(root, "contrib/testdata/certs/proxy.crt"), "nonexistent.key", filepath.Join(root, "contrib/testdata/certs/ca.crt"), false)
+	_, err := LoadConfigFromFiles(filepath.Join(root, "contrib/testdata/certs/proxy.crt"), "nonexistent.key", filepath.Join(root, "contrib/testdata/certs/ca.crt"), false, TLSOptions{})
 	if err == nil {
 		t.Error("Expected error for missing key file, got nil")
 	}
 }
 
 func TestLoadConfigFromFiles_MissingBoth(t *testing.T) {
-	_, err := LoadConfigFromFiles("nonexistent.crt", "nonexistent.key", "", false)
+	_, err := LoadConfigFromFiles("nonexistent.crt", "nonexistent.key", "", false, TLSOptions{})
 	if err == nil {
 		t.Error("Expected error for missing cert and key files, got nil")
 	}
@@ -108,7 +108,7 @@ func TestLoadConfigFromFiles_MissingBoth(t *testing.T) {
 func TestLoadConfigFromFiles_NoCASource(t *testing.T) {
 	root := projectRoot(t)
 	// When no CA file and no system roots - should error
-	_, err := LoadConfigFromFiles(filepath.Join(root, "contrib/testdata/certs/proxy.crt"), filepath.Join(root, "contrib/testdata/certs/proxy.key"), "", false)
+	_, err := LoadConfigFromFiles(filepath.Join(root, "contrib/testdata/certs/proxy.crt"), filepath.Join(root, "contrib/testdata/certs/proxy.key"), "", false, TLSOptions{})
 	if err == nil {
 		t.Error("Expected error when no CA source provided, got nil")
 	}

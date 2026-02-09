@@ -23,6 +23,7 @@ import (
 	"github.com/colebrumley/tlspxy/internal/proxy"
 	sighandler "github.com/colebrumley/tlspxy/internal/signal"
 	tlsconfig "github.com/colebrumley/tlspxy/internal/tls"
+	"golang.org/x/net/http2"
 )
 
 // AppVersion is the global application version
@@ -84,6 +85,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	if k.Bool("validate") {
+		fmt.Println("Configuration is valid.")
+		c, _ := json.MarshalIndent(k.Raw(), "", "  ")
+		fmt.Println(string(c))
+		os.Exit(0)
+	}
+
 	// Create the SigHandlerMux and configure logging
 	shm = sighandler.New()
 	go shm.WatchForSignals()
@@ -121,7 +129,18 @@ func main() {
 	}
 
 	// Configure the server's TLS settings
-	listener := tlsconfig.ConfigServer(inner, k)
+	listener, certStore := tlsconfig.ConfigServer(inner, k)
+
+	if certStore != nil {
+		shm.AddHandler(func() {
+			if err := certStore.ReloadAll(); err != nil {
+				slog.Error("Failed to reload certificates", "error", err)
+			} else {
+				slog.Info("Certificates reloaded successfully")
+			}
+		}, syscall.SIGHUP)
+		slog.Info("Certificate hot-reload enabled (send SIGHUP to reload)")
+	}
 
 	// Load the remote config. This will depend on what kind of listener
 	// we have configured.
@@ -293,6 +312,14 @@ func main() {
 			defer cancel()
 			srv.Shutdown(ctx)
 		}, os.Interrupt, syscall.SIGTERM)
+
+		if k.Bool("server.http2") {
+			http2.ConfigureServer(srv, &http2.Server{})
+			if baseTransport, ok := pt.RoundTripper.(*http.Transport); ok {
+				http2.ConfigureTransport(baseTransport)
+			}
+			slog.Info("HTTP/2 enabled")
+		}
 
 		slog.Info("Opening proxy", "from", serverTCPAddr.String(), "to", u.String())
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {

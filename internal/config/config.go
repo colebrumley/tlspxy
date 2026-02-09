@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	tlsconfig "github.com/colebrumley/tlspxy/internal/tls"
+
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/basicflag"
 	"github.com/knadh/koanf/providers/confmap"
@@ -23,7 +25,8 @@ import (
 // flagDesc maps flag names (dash-delimited) to human-readable descriptions.
 var flagDesc = map[string]string{
 	// General
-	"config": "Path to config file or directory",
+	"config":   "Path to config file or directory",
+	"validate": "Validate configuration and print resolved values, then exit",
 
 	// Server
 	"server-addr":                     "Listen address (host:port)",
@@ -38,18 +41,27 @@ var flagDesc = map[string]string{
 	"server-tls-ca":                   "Path to CA cert for client verification",
 	"server-tls-require":              "Require client certificates",
 	"server-tls-verify":               "Require and verify client certificates",
+	"server-tls-minversion":           "Minimum TLS version (1.0, 1.1, 1.2, 1.3)",
+	"server-tls-maxversion":           "Maximum TLS version (1.0, 1.1, 1.2, 1.3)",
+	"server-tls-ciphersuites":         "Comma-separated TLS cipher suite names",
+	"server-tls-alpn":                 "Comma-separated ALPN protocols (e.g. h2,http/1.1)",
 	"server-tls-letsencrypt-enable":   "Enable automatic Let's Encrypt certificates",
 	"server-tls-letsencrypt-domain":   "Domain for the Let's Encrypt certificate",
 	"server-tls-letsencrypt-cachedir": "Certificate cache directory",
+	"server-http2":                    "Enable HTTP/2 support (http/https modes only)",
 
 	// Remote
-	"remote-addr":        "Backend address (host:port for TCP, URL for HTTP)",
-	"remote-tls-enable":  "Use TLS when connecting to the backend",
-	"remote-tls-verify":  "Verify backend TLS certificate",
-	"remote-tls-cert":    "Client certificate for backend mTLS",
-	"remote-tls-key":     "Client key for backend mTLS",
-	"remote-tls-ca":      "Custom CA cert for backend verification",
-	"remote-tls-sysroots": "Include system CA roots for backend",
+	"remote-addr":            "Backend address (host:port for TCP, URL for HTTP)",
+	"remote-tls-enable":      "Use TLS when connecting to the backend",
+	"remote-tls-verify":      "Verify backend TLS certificate",
+	"remote-tls-cert":        "Client certificate for backend mTLS",
+	"remote-tls-key":         "Client key for backend mTLS",
+	"remote-tls-ca":          "Custom CA cert for backend verification",
+	"remote-tls-sysroots":    "Include system CA roots for backend",
+	"remote-tls-minversion":  "Minimum TLS version for backend",
+	"remote-tls-maxversion":  "Maximum TLS version for backend",
+	"remote-tls-ciphersuites": "Comma-separated cipher suites for backend",
+	"remote-tls-alpn":        "Comma-separated ALPN protocols for backend",
 
 	// Log
 	"log-level":       "Log level: debug, info, warn, error",
@@ -75,6 +87,7 @@ func helpGroups() []flagGroup {
 			name: "General",
 			flags: []string{
 				"config",
+				"validate",
 			},
 		},
 		{
@@ -84,6 +97,7 @@ func helpGroups() []flagGroup {
 				"server-type",
 				"server-healthcheck",
 				"server-maxconns",
+				"server-http2",
 				"server-timeouts-read",
 				"server-timeouts-write",
 				"server-timeouts-idle",
@@ -97,6 +111,10 @@ func helpGroups() []flagGroup {
 				"server-tls-ca",
 				"server-tls-require",
 				"server-tls-verify",
+				"server-tls-minversion",
+				"server-tls-maxversion",
+				"server-tls-ciphersuites",
+				"server-tls-alpn",
 				"server-tls-letsencrypt-enable",
 				"server-tls-letsencrypt-domain",
 				"server-tls-letsencrypt-cachedir",
@@ -112,6 +130,10 @@ func helpGroups() []flagGroup {
 				"remote-tls-key",
 				"remote-tls-ca",
 				"remote-tls-sysroots",
+				"remote-tls-minversion",
+				"remote-tls-maxversion",
+				"remote-tls-ciphersuites",
+				"remote-tls-alpn",
 			},
 		},
 		{
@@ -426,6 +448,45 @@ func ValidateConfig(k *koanf.Koanf) error {
 	logLevel := k.String("log.level")
 	if strings.EqualFold(logLevel, "warning") {
 		k.Set("log.level", "warn")
+	}
+
+	// 9. server.http2 is only valid for http/https modes
+	if k.Bool("server.http2") && serverType == "tcp" {
+		return fmt.Errorf("server.http2 is only valid with server.type http or https, got %q\n  set via: -server-type or server.type in config", serverType)
+	}
+
+	// 10. Validate TLS version strings
+	for _, key := range []string{
+		"server.tls.minversion", "server.tls.maxversion",
+		"remote.tls.minversion", "remote.tls.maxversion",
+	} {
+		if v := k.String(key); v != "" {
+			if _, err := tlsconfig.ParseTLSVersion(v); err != nil {
+				return fmt.Errorf("%s: %w", key, err)
+			}
+		}
+	}
+
+	// 11. Validate cipher suite names
+	for _, key := range []string{"server.tls.ciphersuites", "remote.tls.ciphersuites"} {
+		if v := k.String(key); v != "" {
+			if _, err := tlsconfig.ParseCipherSuites(v); err != nil {
+				return fmt.Errorf("%s: %w", key, err)
+			}
+		}
+	}
+
+	// 12. Validate min <= max version
+	for _, prefix := range []string{"server.tls", "remote.tls"} {
+		minStr := k.String(prefix + ".minversion")
+		maxStr := k.String(prefix + ".maxversion")
+		if minStr != "" && maxStr != "" {
+			minV, _ := tlsconfig.ParseTLSVersion(minStr)
+			maxV, _ := tlsconfig.ParseTLSVersion(maxStr)
+			if minV > maxV {
+				return fmt.Errorf("%s.minversion (%s) must be <= %s.maxversion (%s)", prefix, minStr, prefix, maxStr)
+			}
+		}
 	}
 
 	return nil

@@ -19,39 +19,44 @@ func serverTLSKoanf(t *testing.T, m map[string]interface{}) *koanf.Koanf {
 	return k
 }
 
+func baseServerTLSMap() map[string]interface{} {
+	return map[string]interface{}{
+		"cert": "", "key": "", "ca": "",
+		"require": false, "verify": false,
+		"minversion": "", "maxversion": "", "ciphersuites": "", "alpn": "",
+		"letsencrypt": map[string]interface{}{"enable": false},
+	}
+}
+
 func TestGetServerConfig_NoCerts(t *testing.T) {
 	k := serverTLSKoanf(t, map[string]interface{}{
 		"server": map[string]interface{}{
-			"tls": map[string]interface{}{
-				"cert": "", "key": "", "ca": "",
-				"require": false, "verify": false,
-				"letsencrypt": map[string]interface{}{"enable": false},
-			},
+			"tls": baseServerTLSMap(),
 		},
 	})
-	tlsConf, err := GetServerConfig(k)
+	tlsConf, store, err := GetServerConfig(k)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if tlsConf != nil {
 		t.Errorf("expected nil tls.Config when no certs configured, got %+v", tlsConf)
 	}
+	if store != nil {
+		t.Errorf("expected nil CertStore when no certs configured")
+	}
 }
 
 func TestGetServerConfig_WithCerts(t *testing.T) {
 	root := projectRoot(t)
+	m := baseServerTLSMap()
+	m["cert"] = filepath.Join(root, "contrib/testdata/certs/proxy.crt")
+	m["key"] = filepath.Join(root, "contrib/testdata/certs/proxy.key")
+	m["ca"] = filepath.Join(root, "contrib/testdata/certs/ca.crt")
+
 	k := serverTLSKoanf(t, map[string]interface{}{
-		"server": map[string]interface{}{
-			"tls": map[string]interface{}{
-				"cert": filepath.Join(root, "contrib/testdata/certs/proxy.crt"),
-				"key":  filepath.Join(root, "contrib/testdata/certs/proxy.key"),
-				"ca":   filepath.Join(root, "contrib/testdata/certs/ca.crt"),
-				"require": false, "verify": false,
-				"letsencrypt": map[string]interface{}{"enable": false},
-			},
-		},
+		"server": map[string]interface{}{"tls": m},
 	})
-	tlsConf, err := GetServerConfig(k)
+	tlsConf, store, err := GetServerConfig(k)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -61,25 +66,34 @@ func TestGetServerConfig_WithCerts(t *testing.T) {
 	if tlsConf.MinVersion != cryptotls.VersionTLS12 {
 		t.Errorf("MinVersion = %d, want %d (TLS 1.2)", tlsConf.MinVersion, cryptotls.VersionTLS12)
 	}
-	if len(tlsConf.Certificates) == 0 {
-		t.Error("expected certificates to be loaded")
+	if tlsConf.GetCertificate == nil {
+		t.Error("expected GetCertificate to be set")
+	}
+	if store == nil {
+		t.Fatal("expected non-nil CertStore")
+	}
+	// Verify cert is loadable via GetCertificate
+	cert, err := store.GetCertificate(&cryptotls.ClientHelloInfo{})
+	if err != nil {
+		t.Fatalf("GetCertificate error: %v", err)
+	}
+	if cert == nil {
+		t.Error("expected non-nil certificate from CertStore")
 	}
 }
 
 func TestGetServerConfig_RequireClientCert(t *testing.T) {
 	root := projectRoot(t)
+	m := baseServerTLSMap()
+	m["cert"] = filepath.Join(root, "contrib/testdata/certs/proxy.crt")
+	m["key"] = filepath.Join(root, "contrib/testdata/certs/proxy.key")
+	m["ca"] = filepath.Join(root, "contrib/testdata/certs/ca.crt")
+	m["require"] = true
+
 	k := serverTLSKoanf(t, map[string]interface{}{
-		"server": map[string]interface{}{
-			"tls": map[string]interface{}{
-				"cert": filepath.Join(root, "contrib/testdata/certs/proxy.crt"),
-				"key":  filepath.Join(root, "contrib/testdata/certs/proxy.key"),
-				"ca":   filepath.Join(root, "contrib/testdata/certs/ca.crt"),
-				"require": true, "verify": false,
-				"letsencrypt": map[string]interface{}{"enable": false},
-			},
-		},
+		"server": map[string]interface{}{"tls": m},
 	})
-	tlsConf, err := GetServerConfig(k)
+	tlsConf, _, err := GetServerConfig(k)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,18 +107,16 @@ func TestGetServerConfig_RequireClientCert(t *testing.T) {
 
 func TestGetServerConfig_VerifyClientCert(t *testing.T) {
 	root := projectRoot(t)
+	m := baseServerTLSMap()
+	m["cert"] = filepath.Join(root, "contrib/testdata/certs/proxy.crt")
+	m["key"] = filepath.Join(root, "contrib/testdata/certs/proxy.key")
+	m["ca"] = filepath.Join(root, "contrib/testdata/certs/ca.crt")
+	m["verify"] = true
+
 	k := serverTLSKoanf(t, map[string]interface{}{
-		"server": map[string]interface{}{
-			"tls": map[string]interface{}{
-				"cert": filepath.Join(root, "contrib/testdata/certs/proxy.crt"),
-				"key":  filepath.Join(root, "contrib/testdata/certs/proxy.key"),
-				"ca":   filepath.Join(root, "contrib/testdata/certs/ca.crt"),
-				"require": false, "verify": true,
-				"letsencrypt": map[string]interface{}{"enable": false},
-			},
-		},
+		"server": map[string]interface{}{"tls": m},
 	})
-	tlsConf, err := GetServerConfig(k)
+	tlsConf, _, err := GetServerConfig(k)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,18 +130,17 @@ func TestGetServerConfig_VerifyClientCert(t *testing.T) {
 
 func TestGetServerConfig_VerifyOverridesRequire(t *testing.T) {
 	root := projectRoot(t)
+	m := baseServerTLSMap()
+	m["cert"] = filepath.Join(root, "contrib/testdata/certs/proxy.crt")
+	m["key"] = filepath.Join(root, "contrib/testdata/certs/proxy.key")
+	m["ca"] = filepath.Join(root, "contrib/testdata/certs/ca.crt")
+	m["require"] = true
+	m["verify"] = true
+
 	k := serverTLSKoanf(t, map[string]interface{}{
-		"server": map[string]interface{}{
-			"tls": map[string]interface{}{
-				"cert": filepath.Join(root, "contrib/testdata/certs/proxy.crt"),
-				"key":  filepath.Join(root, "contrib/testdata/certs/proxy.key"),
-				"ca":   filepath.Join(root, "contrib/testdata/certs/ca.crt"),
-				"require": true, "verify": true,
-				"letsencrypt": map[string]interface{}{"enable": false},
-			},
-		},
+		"server": map[string]interface{}{"tls": m},
 	})
-	tlsConf, err := GetServerConfig(k)
+	tlsConf, _, err := GetServerConfig(k)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,25 +154,25 @@ func TestGetServerConfig_VerifyOverridesRequire(t *testing.T) {
 
 func TestConfigServer_WrapsListener(t *testing.T) {
 	root := projectRoot(t)
+	m := baseServerTLSMap()
+	m["cert"] = filepath.Join(root, "contrib/testdata/certs/proxy.crt")
+	m["key"] = filepath.Join(root, "contrib/testdata/certs/proxy.key")
+	m["ca"] = filepath.Join(root, "contrib/testdata/certs/ca.crt")
+
 	k := serverTLSKoanf(t, map[string]interface{}{
-		"server": map[string]interface{}{
-			"tls": map[string]interface{}{
-				"cert": filepath.Join(root, "contrib/testdata/certs/proxy.crt"),
-				"key":  filepath.Join(root, "contrib/testdata/certs/proxy.key"),
-				"ca":   filepath.Join(root, "contrib/testdata/certs/ca.crt"),
-				"require": false, "verify": false,
-				"letsencrypt": map[string]interface{}{"enable": false},
-			},
-		},
+		"server": map[string]interface{}{"tls": m},
 	})
 	inner, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen error: %v", err)
 	}
 	defer inner.Close()
-	wrapped := ConfigServer(inner, k)
+	wrapped, store := ConfigServer(inner, k)
 	if wrapped == inner {
 		t.Error("expected ConfigServer to wrap the listener when TLS is configured")
+	}
+	if store == nil {
+		t.Error("expected non-nil CertStore from ConfigServer")
 	}
 	wrapped.Close()
 }
@@ -169,11 +180,7 @@ func TestConfigServer_WrapsListener(t *testing.T) {
 func TestConfigServer_NoTLS(t *testing.T) {
 	k := serverTLSKoanf(t, map[string]interface{}{
 		"server": map[string]interface{}{
-			"tls": map[string]interface{}{
-				"cert": "", "key": "", "ca": "",
-				"require": false, "verify": false,
-				"letsencrypt": map[string]interface{}{"enable": false},
-			},
+			"tls": baseServerTLSMap(),
 		},
 	})
 	inner, err := net.Listen("tcp", "127.0.0.1:0")
@@ -181,26 +188,26 @@ func TestConfigServer_NoTLS(t *testing.T) {
 		t.Fatalf("net.Listen error: %v", err)
 	}
 	defer inner.Close()
-	result := ConfigServer(inner, k)
+	result, store := ConfigServer(inner, k)
 	if result != inner {
 		t.Error("expected ConfigServer to return the original listener when no TLS configured")
+	}
+	if store != nil {
+		t.Error("expected nil CertStore when no TLS configured")
 	}
 }
 
 func TestGetServerConfig_LetsEncrypt(t *testing.T) {
+	m := baseServerTLSMap()
+	m["letsencrypt"] = map[string]interface{}{
+		"enable": true, "domain": "example.org",
+		"email": "test@example.org", "cachedir": "/tmp/le-test",
+	}
+
 	k := serverTLSKoanf(t, map[string]interface{}{
-		"server": map[string]interface{}{
-			"tls": map[string]interface{}{
-				"cert": "", "key": "", "ca": "",
-				"require": false, "verify": false,
-				"letsencrypt": map[string]interface{}{
-					"enable": true, "domain": "example.org",
-					"email": "test@example.org", "cachedir": "/tmp/le-test",
-				},
-			},
-		},
+		"server": map[string]interface{}{"tls": m},
 	})
-	tlsConf, err := GetServerConfig(k)
+	tlsConf, store, err := GetServerConfig(k)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -213,25 +220,80 @@ func TestGetServerConfig_LetsEncrypt(t *testing.T) {
 	if tlsConf.GetCertificate == nil {
 		t.Error("expected GetCertificate to be set for LetsEncrypt")
 	}
+	if store != nil {
+		t.Error("expected nil CertStore for LetsEncrypt (LE manages its own certs)")
+	}
 }
 
 func TestGetServerConfig_InvalidCerts(t *testing.T) {
+	m := baseServerTLSMap()
+	m["cert"] = "/nonexistent/cert.pem"
+	m["key"] = "/nonexistent/key.pem"
+
 	k := serverTLSKoanf(t, map[string]interface{}{
-		"server": map[string]interface{}{
-			"tls": map[string]interface{}{
-				"cert": "/nonexistent/cert.pem",
-				"key":  "/nonexistent/key.pem",
-				"ca":   "",
-				"require": false, "verify": false,
-				"letsencrypt": map[string]interface{}{"enable": false},
-			},
-		},
+		"server": map[string]interface{}{"tls": m},
 	})
-	tlsConf, err := GetServerConfig(k)
+	tlsConf, store, err := GetServerConfig(k)
 	if err == nil {
 		t.Fatal("expected error for invalid cert paths, got nil")
 	}
 	if tlsConf != nil {
 		t.Errorf("expected nil tls.Config on error, got %+v", tlsConf)
+	}
+	if store != nil {
+		t.Error("expected nil CertStore on error")
+	}
+}
+
+func TestGetServerConfig_WithTLSVersionOptions(t *testing.T) {
+	root := projectRoot(t)
+	m := baseServerTLSMap()
+	m["cert"] = filepath.Join(root, "contrib/testdata/certs/proxy.crt")
+	m["key"] = filepath.Join(root, "contrib/testdata/certs/proxy.key")
+	m["ca"] = filepath.Join(root, "contrib/testdata/certs/ca.crt")
+	m["minversion"] = "1.3"
+	m["maxversion"] = "1.3"
+
+	k := serverTLSKoanf(t, map[string]interface{}{
+		"server": map[string]interface{}{"tls": m},
+	})
+	tlsConf, _, err := GetServerConfig(k)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tlsConf == nil {
+		t.Fatal("expected non-nil tls.Config")
+	}
+	if tlsConf.MinVersion != cryptotls.VersionTLS13 {
+		t.Errorf("MinVersion = %d, want %d (TLS 1.3)", tlsConf.MinVersion, cryptotls.VersionTLS13)
+	}
+	if tlsConf.MaxVersion != cryptotls.VersionTLS13 {
+		t.Errorf("MaxVersion = %d, want %d (TLS 1.3)", tlsConf.MaxVersion, cryptotls.VersionTLS13)
+	}
+}
+
+func TestGetServerConfig_WithALPN(t *testing.T) {
+	root := projectRoot(t)
+	m := baseServerTLSMap()
+	m["cert"] = filepath.Join(root, "contrib/testdata/certs/proxy.crt")
+	m["key"] = filepath.Join(root, "contrib/testdata/certs/proxy.key")
+	m["ca"] = filepath.Join(root, "contrib/testdata/certs/ca.crt")
+	m["alpn"] = "h2,http/1.1"
+
+	k := serverTLSKoanf(t, map[string]interface{}{
+		"server": map[string]interface{}{"tls": m},
+	})
+	tlsConf, _, err := GetServerConfig(k)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tlsConf == nil {
+		t.Fatal("expected non-nil tls.Config")
+	}
+	if len(tlsConf.NextProtos) != 2 {
+		t.Fatalf("NextProtos length = %d, want 2", len(tlsConf.NextProtos))
+	}
+	if tlsConf.NextProtos[0] != "h2" || tlsConf.NextProtos[1] != "http/1.1" {
+		t.Errorf("NextProtos = %v, want [h2 http/1.1]", tlsConf.NextProtos)
 	}
 }

@@ -1,0 +1,33 @@
+#tlspxy — Mutual TLS (mTLS) with client certificate verification
+#
+# Requires clients to present a valid certificate signed by the
+# specified CA. Useful for service-to-service authentication.
+
+server:
+  addr: ":8443"
+  type: tcp
+  tls:
+    cert: /etc/tlspxy/server.crt
+    key: /etc/tlspxy/server.key
+    # CA certificate used to verify client certificates
+    ca: /etc/tlspxy/ca.crt
+    # Require clients to present a certificate
+    require: true
+    # Verify that client certificates are signed by the CA
+    verify: true
+
+remote:
+  # Forward to backend with mTLS as well
+  addr: "backend.internal:8080"
+  tls:
+    enable: true
+    verify: true
+    # Client certificate for authenticating to the backend
+    cert: /etc/tlspxy/client.crt
+    key: /etc/tlspxy/client.key
+    # CA to verify the backend's certificate
+    ca: /etc/tlspxy/backend-ca.crt
+    sysroots: false
+
+log:
+  level: info

@@ -1,0 +1,30 @@
+#tlspxy — SNI-based multi-domain certificate selection
+#
+# Serves different TLS certificates based on the hostname
+# the client connects to (Server Name Indication).
+# Non-matching hostnames fall back to the default certificate.
+
+server:
+  addr: ":443"
+  type: https
+  healthcheck: /healthz
+  tls:
+    # Default certificate (used when no SNI match)
+    cert: /etc/tlspxy/default.crt
+    key: /etc/tlspxy/default.key
+    # Per-hostname certificates
+    sni:
+      - hostname: "app.example.com"
+        cert: /etc/tlspxy/app.example.com.crt
+        key: /etc/tlspxy/app.example.com.key
+      - hostname: "api.example.com"
+        cert: /etc/tlspxy/api.example.com.crt
+        key: /etc/tlspxy/api.example.com.key
+
+remote:
+  addr: "http://127.0.0.1:8080"
+  tls:
+    enable: false
+
+log:
+  level: info

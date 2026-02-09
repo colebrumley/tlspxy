@@ -1,0 +1,6 @@
+services:
+  loadtest:
+    build:
+      context: ../..
+      dockerfile: contrib/loadtest/loadtest.Dockerfile
+    command: ["-scenario", "all", "-duration", "10s"]

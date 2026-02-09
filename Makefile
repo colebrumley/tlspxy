@@ -38,3 +38,12 @@ deps:
 
 clean:
 	rm -Rf tlspxy bin/
+
+loadtest:
+	go build -o bin/loadtest ./cmd/loadtest
+
+bench:
+	go test -bench=. -benchtime=10s -run=^$$ ./internal/proxy/
+
+loadtest-docker:
+	docker compose -f contrib/loadtest/docker-compose.yml up --build --abort-on-container-exit

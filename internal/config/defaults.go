@@ -63,4 +63,24 @@ var DefaultConfig = map[string]interface{}{
 		"addr":   ":9090",
 		"path":   "/metrics",
 	},
+	"sigv4": map[string]interface{}{
+		"enable":       false,
+		"keystore":     "",
+		"autoreload":   false,
+		"service":      "",
+		"region":       "",
+		"endpoint":     "",
+		"hostoverride": false,
+		"clockskew":    "300s",
+		"maxbodysize":  10485760, // 10 MiB
+		"creds": map[string]interface{}{
+			"source":       "default",
+			"accesskey":    "",
+			"secretkey":    "",
+			"sessiontoken": "",
+			"tokenfile":    "",
+			"rolearn":      "",
+			"sessionname":  "tlspxy",
+		},
+	},
 }

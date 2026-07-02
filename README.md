@@ -124,6 +124,25 @@ metrics:
   enable: false              # Enable Prometheus metrics
   addr: ":9090"              # Metrics server listen address
   path: "/metrics"           # Metrics endpoint path
+
+sigv4:                       # AWS SigV4 credential-translation gateway (http/https only)
+  enable: false              # Enable the SigV4 gateway
+  keystore: ""               # Path to the client access-key keystore YAML file
+  autoreload: false          # Watch the keystore file and reload automatically on change
+  service: ""                # Default target AWS service (e.g. s3, dynamodb)
+  region: ""                 # Default target AWS region (e.g. us-east-1)
+  endpoint: ""               # Explicit target endpoint URL (empty => https://<service>.<region>.amazonaws.com)
+  hostoverride: false        # Allow the inbound Host header to override the target service/region
+  clockskew: "300s"          # Max allowed clock skew for inbound signatures
+  maxbodysize: 10485760      # Max inbound body size (bytes) buffered for verification/re-signing
+  creds:                     # Outbound base credential source
+    source: "default"        # static | default | webidentity
+    accesskey: ""            # Static access key ID (source=static)
+    secretkey: ""            # Static secret access key (source=static)
+    sessiontoken: ""         # Static session token (source=static, optional)
+    tokenfile: ""            # Web identity token file (source=webidentity)
+    rolearn: ""              # Web identity role ARN (source=webidentity)
+    sessionname: "tlspxy"    # Role session name for AssumeRole / web identity
 ```
 
 Notes:
@@ -234,6 +253,33 @@ server:
 
 Configures both the server and the backend transport for HTTP/2. Requires `server.type` http/https; set `alpn` so clients negotiate `h2`.
 
+## AWS SigV4 Gateway
+
+In HTTP/HTTPS mode, tlspxy can act as an AWS SigV4 credential-translation gateway (`sigv4.enable: true`). Clients sign requests with tlspxy-issued SigV4 access keys; tlspxy fully verifies each signature (recomputing the canonical request, not just checking for auth headers), maps the verified access key to an outbound AWS role, re-signs the request with real AWS credentials it obtains itself, and forwards it to the AWS endpoint. Enabling SigV4 replaces the plain reverse proxy for that listener. It is rejected under `server.type: tcp`.
+
+The client keystore is a separate YAML file (`sigv4.keystore`) mapping each access-key ID to a shared secret and an optional outbound role:
+
+```yaml
+keys:
+  AKIACLIENTONE:
+    secret: "client-one-shared-secret"
+    role_arn: "arn:aws:iam::111111111111:role/client-one"   # optional
+    external_id: "optional-external-id"                       # optional
+    session_name: "optional-session-name"                     # optional
+```
+
+The keystore hot-reloads on **SIGHUP**, and automatically when `sigv4.autoreload: true` (directory-level fsnotify watch, debounced, fail-safe — a bad file keeps the previously loaded keys), mirroring the certificate reload mechanism.
+
+**Outbound credentials.** `sigv4.creds.source` selects the base credential source — `static` (`accesskey`/`secretkey`), `default` (IMDS / default provider chain), or `webidentity` (`tokenfile`/`rolearn`, AssumeRoleWithWebIdentity). A keystore entry with a `role_arn` additionally assumes that role via STS on top of the base source; assumed credentials are cached and refreshed before expiry rather than re-assumed per request.
+
+**Routing.** The target defaults to `sigv4.service`/`sigv4.region` (or an explicit `sigv4.endpoint`). With `sigv4.hostoverride: true`, an inbound Host header of the form `<service>.<region>.amazonaws.com` selects that service/region per request.
+
+**Verification.** Requests are rejected (AWS-style XML **403**, no AWS call made) for a missing/malformed signature, unknown access key, signature mismatch, clock skew beyond `sigv4.clockskew`, or a payload hash that does not match the body. Streaming payloads (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`) are unsupported; fixed signed payloads and `UNSIGNED-PAYLOAD` are supported. Outbound credential/STS failures return a distinct gateway **5xx** and never fall back to unsigned or to another client's role.
+
+**Auditing.** Every request emits one audit line via the standard slog pipeline with `component=sigv4`: client identity, assumed role, target service/region, method, path, status, and latency. Secrets, session tokens, and signatures are never logged or returned in error bodies.
+
+See [`contrib/examples/sigv4-gateway.yml`](contrib/examples/sigv4-gateway.yml).
+
 ## Metrics
 
 Enable with `metrics.enable: true` (served on `metrics.addr` at `metrics.path`):
@@ -267,6 +313,7 @@ Complete configurations in [`contrib/examples/`](contrib/examples/):
 | [`sni-multi-domain.yml`](contrib/examples/sni-multi-domain.yml) | SNI-based multi-domain certs |
 | [`http2.yml`](contrib/examples/http2.yml) | HTTP/2 with ALPN and TLS backend |
 | [`strict-tls.yml`](contrib/examples/strict-tls.yml) | Hardened TLS 1.3 only |
+| [`sigv4-gateway.yml`](contrib/examples/sigv4-gateway.yml) | AWS SigV4 credential-translation gateway |
 
 ## Building
 

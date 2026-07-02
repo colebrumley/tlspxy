@@ -905,6 +905,88 @@ func TestValidateConfig(t *testing.T) {
 			},
 			wantErr: "",
 		},
+		{
+			name: "sigv4 rejected in tcp mode",
+			overrides: map[string]interface{}{
+				"sigv4": map[string]interface{}{
+					"enable":   true,
+					"keystore": "/etc/tlspxy/keystore.yml",
+					"service":  "s3",
+					"region":   "us-east-1",
+				},
+			},
+			wantErr: "sigv4.enable is only valid with server.type http or https",
+		},
+		{
+			name: "sigv4 requires keystore",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{"type": "https", "tls": map[string]interface{}{"cert": "/c", "key": "/k"}},
+				"remote": map[string]interface{}{"addr": "https://example.com"},
+				"sigv4": map[string]interface{}{
+					"enable":  true,
+					"service": "s3",
+					"region":  "us-east-1",
+				},
+			},
+			wantErr: "sigv4.keystore is required",
+		},
+		{
+			name: "sigv4 invalid creds source",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{"type": "https", "tls": map[string]interface{}{"cert": "/c", "key": "/k"}},
+				"remote": map[string]interface{}{"addr": "https://example.com"},
+				"sigv4": map[string]interface{}{
+					"enable":   true,
+					"keystore": "/ks.yml",
+					"service":  "s3",
+					"region":   "us-east-1",
+					"creds":    map[string]interface{}{"source": "magic"},
+				},
+			},
+			wantErr: "sigv4.creds.source must be one of",
+		},
+		{
+			name: "sigv4 static creds require keys",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{"type": "https", "tls": map[string]interface{}{"cert": "/c", "key": "/k"}},
+				"remote": map[string]interface{}{"addr": "https://example.com"},
+				"sigv4": map[string]interface{}{
+					"enable":   true,
+					"keystore": "/ks.yml",
+					"service":  "s3",
+					"region":   "us-east-1",
+					"creds":    map[string]interface{}{"source": "static"},
+				},
+			},
+			wantErr: "sigv4.creds.accesskey and sigv4.creds.secretkey are required",
+		},
+		{
+			name: "sigv4 requires service/region without hostoverride",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{"type": "https", "tls": map[string]interface{}{"cert": "/c", "key": "/k"}},
+				"remote": map[string]interface{}{"addr": "https://example.com"},
+				"sigv4": map[string]interface{}{
+					"enable":   true,
+					"keystore": "/ks.yml",
+				},
+			},
+			wantErr: "sigv4.service is required",
+		},
+		{
+			name: "sigv4 valid https config",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{"type": "https", "tls": map[string]interface{}{"cert": "/c", "key": "/k"}},
+				"remote": map[string]interface{}{"addr": "https://example.com"},
+				"sigv4": map[string]interface{}{
+					"enable":   true,
+					"keystore": "/ks.yml",
+					"service":  "s3",
+					"region":   "us-east-1",
+					"creds":    map[string]interface{}{"source": "default"},
+				},
+			},
+			wantErr: "",
+		},
 	}
 
 	for _, tt := range tests {

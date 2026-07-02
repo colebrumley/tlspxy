@@ -54,6 +54,10 @@ Built on **koanf**. Precedence, lowest to highest: built-in defaults → YAML fi
 
 `SigHandlerMux` multiplexes OS signals to registered handlers. `main.go` registers SIGHUP→cert reload and SIGINT/SIGTERM→graceful shutdown. Shutdown also flows through a root `context.Context` (`signal.NotifyContext`) that closes the listener / calls `srv.Shutdown`.
 
+### SigV4 gateway (`internal/sigv4`)
+
+Opt-in (`sigv4.enable`, http/https only) AWS SigV4 credential-translation gateway that **replaces** the plain reverse proxy in `main.go`'s http branch. `handler.go` is the `http.Handler`: it buffers the (fixed) body, verifies the inbound client signature (`verify.go` recomputes the signature with the aws-sdk-go-v2 v4 signer against a clone stripped to the client's `SignedHeaders`, then constant-time compares — verification failures → AWS-style XML 403, no AWS call), maps the verified access key to outbound creds (`creds.go`: base source static/default/webidentity plus per-client `stscreds` AssumeRole wrapped in `aws.CredentialsCache`; credential/STS failure → distinct 5xx), resolves the target (`target.go`: config default or `<service>.<region>.amazonaws.com` Host override), re-signs, forwards, and emits one audit line (`component=sigv4`, no secrets/signatures). `keystore.go` is the hot-reloadable client keystore (SIGHUP `ReloadAll` + optional `Watch`, mirroring `tls.CertStore`/`watcher.go` — directory watch, ~500ms debounce package var, fail-safe). `build.go`'s `Build` wires it from config, fail-closed. Streaming payloads are rejected; `UNSIGNED-PAYLOAD` and fixed signed payloads are supported. Uses aws-sdk-go-v2 (intentional dep exception, dec-7).
+
 ### Other packages
 
 - `internal/metrics` — Prometheus counters/gauges (`tlspxy_*`), served on its own listener when `metrics.enable`.

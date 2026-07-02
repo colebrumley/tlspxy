@@ -1,7 +1,6 @@
 GO_REPO = github.com/colebrumley/tlspxy
 GO_INSTALL_PATH = /usr/sbin/tlspxy
-DOCKER_IMAGE_NAME = elcolio/tlspxy:latest
-VERSION = 0.3.0
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT_ID = $$(git log | head -n 1 | awk '{print $$2}')
 
 # the go binary will be named tlxpxy_<os>_<arch>
@@ -26,12 +25,6 @@ install: build
 
 test:
 	go test -v -race ./...
-
-docker:
-	docker build -t $(DOCKER_IMAGE_NAME) \
-		--build-arg VERSION=$(VERSION) \
-		--build-arg COMMIT_ID=$(COMMIT_ID) \
-		-f contrib/Dockerfile .
 
 deps:
 	go mod tidy

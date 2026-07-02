@@ -12,7 +12,6 @@ tlspxy is a lightweight TLS-terminating TCP and HTTP/HTTPS reverse proxy written
 make build       # static build (CGO_ENABLED=0) to bin/tlspxy_<os>_<arch>
 make test        # go test -v -race ./...
 make bench       # benchmarks in internal/proxy (10s)
-make docker      # build image from contrib/Dockerfile
 make loadtest    # build the standalone load tester (cmd/loadtest)
 make deps        # go mod tidy
 ```
@@ -93,6 +92,4 @@ The stdlib strips inbound `Forwarded`/`X-Forwarded-*` from the outbound request 
 
 ## Releasing
 
-1. Bump `VERSION` in the Makefile (ldflags inject `main.AppVersion`/`main.CommitID`).
-2. Commit, tag `vX.Y.Z`, push branch and tag.
-3. `gh release create vX.Y.Z --title vX.Y.Z --notes "..."` (releases exist for prior versions; keep the pattern).
+Commits must follow [Conventional Commits](https://www.conventionalcommits.org/) (enforced by `commitlint` in CI, config in `commitlint.config.mjs`). On every push to `master`, `.github/workflows/release.yml` runs `go-semantic-release` to inspect commits since the last tag: if there's a releasable `feat`/`fix`/etc., it cuts a new `vX.Y.Z` tag and GitHub release automatically; if not, the job is a no-op. When a release is cut, the workflow cross-compiles static binaries (same ldflags pattern as the Makefile) for linux/darwin amd64+arm64 and windows/amd64 and attaches them to the release. `VERSION` is no longer hand-bumped anywhere — the Makefile derives it via `git describe --tags`.

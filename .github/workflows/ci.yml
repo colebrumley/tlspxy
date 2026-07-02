@@ -7,6 +7,15 @@ on:
     branches: [master]
 
 jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: wagoid/commitlint-github-action@v6
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -36,6 +45,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -43,6 +54,6 @@ jobs:
 
       - name: Build
         run: |
-          VERSION=0.1.0
+          VERSION=$(git describe --tags --always --dirty)
           COMMIT_ID=$(git rev-parse HEAD)
           go build -ldflags "-X main.AppVersion=${VERSION} -X main.CommitID=${COMMIT_ID}"

@@ -12,7 +12,7 @@ tlspxy sits in front of your services and handles TLS termination, mutual TLS, a
 - Let's Encrypt automatic certificates
 - HAProxy PROXY protocol (v1/v2) to preserve client IPs in TCP mode
 - Prometheus metrics, health check endpoint, structured logging
-- Single static binary; Docker image included
+- Single static binary
 
 ## Quick Start
 
@@ -41,15 +41,6 @@ tlspxy -config config.yaml
 ```
 
 Add `-validate` to check the config and print the resolved settings without starting. `-version` prints version and commit.
-
-### Docker
-
-```sh
-make docker
-docker run -v /path/to/config.yaml:/etc/tlspxy.yaml \
-  -p 8443:8443 \
-  elcolio/tlspxy:latest -config /etc/tlspxy.yaml
-```
 
 ## Configuration
 
@@ -322,5 +313,6 @@ Requires **Go 1.24+**.
 ```sh
 make build     # static binary in bin/
 make test      # go test -race ./...
-make docker    # Docker image
 ```
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/) (linted in CI); releases are tagged and published automatically from commit history.

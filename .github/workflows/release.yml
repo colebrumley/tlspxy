@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Gate the release on the test suite so a broken master never publishes.
+      - name: Test
+        run: go test -race ./...
+
+      - name: Semantic Release
+        id: semrel
+        uses: go-semantic-release/action@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          allow-initial-development-versions: true
+
+      - name: Build binaries
+        if: steps.semrel.outputs.version != ''
+        env:
+          VERSION: v${{ steps.semrel.outputs.version }}
+          COMMIT_ID: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          LDFLAGS="-X main.AppVersion=${VERSION} -X main.CommitID=${COMMIT_ID}"
+          targets="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
+          for target in $targets; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            out="bin/tlspxy_${os}_${arch}"
+            if [ "$os" = "windows" ]; then
+              out="${out}.exe"
+            fi
+            echo "Building ${out}"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -ldflags "$LDFLAGS" -o "$out" .
+          done
+
+      - name: Upload release binaries
+        if: steps.semrel.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v${{ steps.semrel.outputs.version }}" bin/tlspxy_* --clobber

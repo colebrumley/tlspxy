@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/v2"
@@ -89,6 +90,33 @@ func TestGetConfig_NoFiles(t *testing.T) {
 	serverAddr := gotK.String("server.addr")
 	if serverAddr != ":9898" {
 		t.Errorf("server.addr = %q, want %q", serverAddr, ":9898")
+	}
+
+	// remote.timeouts.dial defaults to 10s.
+	if got := gotK.String("remote.timeouts.dial"); got != "10s" {
+		t.Errorf("remote.timeouts.dial = %q, want %q", got, "10s")
+	}
+	if got := Duration(gotK, "remote.timeouts.dial"); got != 10*time.Second {
+		t.Errorf("Duration(remote.timeouts.dial) = %v, want %v", got, 10*time.Second)
+	}
+}
+
+func TestDuration(t *testing.T) {
+	k := newTestKoanf(map[string]interface{}{
+		"a": "30s",
+		"b": "",
+		"c": "notaduration",
+	})
+	if got := Duration(k, "a"); got != 30*time.Second {
+		t.Errorf("Duration(a) = %v, want 30s", got)
+	}
+	// Empty resolves to 0 (use default / disabled).
+	if got := Duration(k, "b"); got != 0 {
+		t.Errorf("Duration(b) = %v, want 0", got)
+	}
+	// Unparseable resolves to 0 (validation is the real gate).
+	if got := Duration(k, "c"); got != 0 {
+		t.Errorf("Duration(c) = %v, want 0", got)
 	}
 }
 
@@ -771,6 +799,101 @@ func TestValidateConfig(t *testing.T) {
 				},
 			},
 			wantErr: "server.tls.minversion",
+		},
+		{
+			name: "valid proxyprotocol v1 in tcp mode",
+			overrides: map[string]interface{}{
+				"remote": map[string]interface{}{
+					"proxyprotocol": "v1",
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name: "valid proxyprotocol v2 in tcp mode",
+			overrides: map[string]interface{}{
+				"remote": map[string]interface{}{
+					"proxyprotocol": "v2",
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name: "invalid proxyprotocol value",
+			overrides: map[string]interface{}{
+				"remote": map[string]interface{}{
+					"proxyprotocol": "v3",
+				},
+			},
+			wantErr: "remote.proxyprotocol must be one of",
+		},
+		{
+			name: "proxyprotocol rejected in http mode",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{
+					"type": "http",
+				},
+				"remote": map[string]interface{}{
+					"addr":          "http://localhost:8080",
+					"proxyprotocol": "v1",
+				},
+			},
+			wantErr: "remote.proxyprotocol is only valid with server.type tcp",
+		},
+		{
+			name: "invalid handshake timeout",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{
+					"timeouts": map[string]interface{}{
+						"handshake": "notaduration",
+					},
+				},
+			},
+			wantErr: "server.timeouts.handshake",
+		},
+		{
+			name: "invalid remote dial timeout",
+			overrides: map[string]interface{}{
+				"remote": map[string]interface{}{
+					"timeouts": map[string]interface{}{
+						"dial": "30sec",
+					},
+				},
+			},
+			wantErr: "remote.timeouts.dial",
+		},
+		{
+			name: "valid remote dial timeout",
+			overrides: map[string]interface{}{
+				"remote": map[string]interface{}{
+					"timeouts": map[string]interface{}{
+						"dial": "5s",
+					},
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name: "empty remote dial timeout allowed",
+			overrides: map[string]interface{}{
+				"remote": map[string]interface{}{
+					"timeouts": map[string]interface{}{
+						"dial": "",
+					},
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name: "empty read timeout allowed",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{
+					"timeouts": map[string]interface{}{
+						"read": "",
+					},
+				},
+			},
+			wantErr: "",
 		},
 	}
 

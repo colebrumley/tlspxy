@@ -165,9 +165,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	readTimeout, _ := time.ParseDuration(k.String("server.timeouts.read"))
-	writeTimeout, _ := time.ParseDuration(k.String("server.timeouts.write"))
-	idleTimeout, _ := time.ParseDuration(k.String("server.timeouts.idle"))
+	// Durations were validated by ValidateConfig above, so config.Duration can
+	// safely resolve them; empty values yield 0 (unbounded/disabled).
+	readTimeout := config.Duration(k, "server.timeouts.read")
+	writeTimeout := config.Duration(k, "server.timeouts.write")
+	idleTimeout := config.Duration(k, "server.timeouts.idle")
+	handshakeTimeout := config.Duration(k, "server.timeouts.handshake")
+	dialTimeout := config.Duration(k, "remote.timeouts.dial")
 
 	// Create a root context that is cancelled on SIGINT/SIGTERM.
 	rootCtx, rootCancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -225,19 +229,22 @@ func main() {
 			connLog.Info("Accepted connection", "src", conn.RemoteAddr().String())
 
 			p := &proxy.TCPProxy{
-				Counter:       &ctr,
-				ServerConn:    conn,
-				ServerAddr:    serverAddr,
-				RemoteAddr:    remoteAddr,
-				RemoteTLSConf: remoteTLS,
-				ErrorSignal:   make(chan bool, 1),
-				Ctx:           rootCtx,
-				ConnID:        connID,
-				ShowContent:   k.Bool("log.contents"),
-				Log:           connLog,
-				ReadTimeout:   readTimeout,
-				WriteTimeout:  writeTimeout,
-				IdleTimeout:   idleTimeout,
+				Counter:          &ctr,
+				ServerConn:       conn,
+				ServerAddr:       serverAddr,
+				RemoteAddr:       remoteAddr,
+				RemoteTLSConf:    remoteTLS,
+				ErrorSignal:      make(chan bool, 1),
+				Ctx:              rootCtx,
+				ConnID:           connID,
+				ShowContent:      k.Bool("log.contents"),
+				Log:              connLog,
+				ReadTimeout:      readTimeout,
+				WriteTimeout:     writeTimeout,
+				IdleTimeout:      idleTimeout,
+				HandshakeTimeout: handshakeTimeout,
+				DialTimeout:      dialTimeout,
+				ProxyProto:       k.String("remote.proxyprotocol"),
 			}
 			wg.Add(1)
 			go func() {
@@ -277,39 +284,17 @@ func main() {
 		// behind another trusted proxy.
 		trustXFF := k.Bool("server.trustxff")
 
-		director := func(req *http.Request) {
-			oldURL := req.URL.String()
-			req.Host = u.Host
-			req.URL.Scheme = u.Scheme
-			req.URL.Host = u.Host
-			req.URL.Path = proxy.SingleJoiningSlash(u.Path, req.URL.Path)
-			if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
-				req.Header.Set("X-Real-IP", clientIP)
-				if trustXFF {
-					if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
-						clientIP = prior + ", " + clientIP
-					}
-				}
-				req.Header.Set("X-Forwarded-For", clientIP)
-			}
-			if u.RawQuery == "" || req.URL.RawQuery == "" {
-				req.URL.RawQuery = u.RawQuery + req.URL.RawQuery
-			} else {
-				req.URL.RawQuery = u.RawQuery + "&" + req.URL.RawQuery
-			}
-			if _, ok := req.Header["User-Agent"]; !ok {
-				// explicitly disable User-Agent so it's not set to default value
-				req.Header.Set("User-Agent", "")
-			}
-			slog.Debug("Rewrote request URL", "component", "http", "from", oldURL, "to", req.URL.String())
-		}
-
 		pt := &proxy.Transport{
 			ShowContent: k.Bool("log.contents"),
 			RoundTripper: &http.Transport{
-				DialContext:           (&net.Dialer{Timeout: readTimeout}).DialContext,
+				// Backend connection establishment (TCP dial + TLS handshake) is
+				// bounded by the dedicated dial timeout. ResponseHeaderTimeout uses
+				// the read timeout ("how long to wait for the backend to start
+				// responding") and stays 0/unbounded when read timeout is unset so
+				// long-polling backends are not broken.
+				DialContext:           (&net.Dialer{Timeout: dialTimeout}).DialContext,
 				TLSClientConfig:       remoteTLS,
-				TLSHandshakeTimeout:   readTimeout,
+				TLSHandshakeTimeout:   dialTimeout,
 				ResponseHeaderTimeout: readTimeout,
 				IdleConnTimeout:       idleTimeout,
 			},
@@ -317,7 +302,7 @@ func main() {
 		shm.AddHandler(pt.InterruptHandler, os.Interrupt, syscall.SIGTERM)
 
 		rp = &httputil.ReverseProxy{
-			Director:  director,
+			Rewrite:   proxy.NewRewrite(u, trustXFF),
 			Transport: pt,
 		}
 		var handler http.Handler = rp

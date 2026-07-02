@@ -38,6 +38,7 @@ var flagDesc = map[string]string{
 	"server-timeouts-read":            "Read timeout per connection (e.g. 30s, 5m)",
 	"server-timeouts-write":           "Write timeout per connection (e.g. 30s, 5m)",
 	"server-timeouts-idle":            "Idle timeout before closing connection (e.g. 5m, 1h)",
+	"server-timeouts-handshake":       "Client TLS handshake timeout, TLS mode only (e.g. 10s)",
 	"server-tls-cert":                 "Path to server TLS certificate",
 	"server-tls-key":                  "Path to server TLS private key",
 	"server-tls-ca":                   "Path to CA cert for client verification",
@@ -54,6 +55,8 @@ var flagDesc = map[string]string{
 
 	// Remote
 	"remote-addr":             "Backend address (host:port for TCP, URL for HTTP)",
+	"remote-proxyprotocol":    "Send HAProxy PROXY protocol header to backend: '', v1, or v2 (TCP mode only)",
+	"remote-timeouts-dial":    "Backend dial (connection establishment) timeout (e.g. 10s)",
 	"remote-tls-enable":       "Use TLS when connecting to the backend",
 	"remote-tls-verify":       "Verify backend TLS certificate",
 	"remote-tls-cert":         "Client certificate for backend mTLS",
@@ -104,6 +107,7 @@ func helpGroups() []flagGroup {
 				"server-timeouts-read",
 				"server-timeouts-write",
 				"server-timeouts-idle",
+				"server-timeouts-handshake",
 			},
 		},
 		{
@@ -127,6 +131,8 @@ func helpGroups() []flagGroup {
 			name: "Remote",
 			flags: []string{
 				"remote-addr",
+				"remote-proxyprotocol",
+				"remote-timeouts-dial",
 				"remote-tls-enable",
 				"remote-tls-verify",
 				"remote-tls-cert",
@@ -474,8 +480,10 @@ func ValidateConfig(k *koanf.Koanf) error {
 		}
 	}
 
-	// 7. Timeout values must be valid Go durations
-	for _, key := range []string{"server.timeouts.read", "server.timeouts.write", "server.timeouts.idle"} {
+	// 7. Timeout values must be valid Go durations. An empty string is allowed
+	// (it means "use the default" or "disabled/unbounded" depending on the key),
+	// but a non-empty value that does not parse as a Go duration is a hard error.
+	for _, key := range []string{"server.timeouts.read", "server.timeouts.write", "server.timeouts.idle", "server.timeouts.handshake", "remote.timeouts.dial"} {
 		if v := k.String(key); v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
 				flagName := strings.ReplaceAll(key, ".", "-")
@@ -516,6 +524,17 @@ func ValidateConfig(k *koanf.Koanf) error {
 		}
 	}
 
+	// 12a. Validate remote.proxyprotocol
+	switch pp := k.String("remote.proxyprotocol"); pp {
+	case "", "v1", "v2":
+		// ok
+	default:
+		return fmt.Errorf("remote.proxyprotocol must be one of \"\", v1, v2; got %q\n  set via: -remote-proxyprotocol or TLSPXY_REMOTE_PROXYPROTOCOL", pp)
+	}
+	if k.String("remote.proxyprotocol") != "" && serverType != "tcp" {
+		return fmt.Errorf("remote.proxyprotocol is only valid with server.type tcp, got %q\n  PROXY protocol applies to raw TCP backends only", serverType)
+	}
+
 	// 12. Validate min <= max version
 	for _, prefix := range []string{"server.tls", "remote.tls"} {
 		minStr := k.String(prefix + ".minversion")
@@ -530,6 +549,24 @@ func ValidateConfig(k *koanf.Koanf) error {
 	}
 
 	return nil
+}
+
+// Duration parses the duration string at key from k and returns it. Because
+// ValidateConfig already rejects non-empty unparseable duration values before
+// anything starts, a parse failure here indicates a programmer error (e.g. a
+// key that was never validated); in that case it logs a warning and returns 0.
+// An empty value returns 0, meaning "use default / disabled" per the caller.
+func Duration(k *koanf.Koanf, key string) time.Duration {
+	v := k.String(key)
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		slog.Warn("Ignoring unparseable duration (should have failed validation)", "key", key, "value", v, "error", err)
+		return 0
+	}
+	return d
 }
 
 // CombineMaps recursively combines n `map[string]interface{}` objects.

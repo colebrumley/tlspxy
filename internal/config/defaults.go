@@ -10,9 +10,10 @@ var DefaultConfig = map[string]interface{}{
 		"http2":       false,
 		"trustxff":    false,
 		"timeouts": map[string]interface{}{
-			"read":  "0s",
-			"write": "0s",
-			"idle":  "300s",
+			"read":      "0s",
+			"write":     "0s",
+			"idle":      "300s",
+			"handshake": "10s",
 		},
 		"tls": map[string]interface{}{
 			"verify":       false,
@@ -32,7 +33,11 @@ var DefaultConfig = map[string]interface{}{
 		},
 	},
 	"remote": map[string]interface{}{
-		"addr": "",
+		"addr":          "",
+		"proxyprotocol": "",
+		"timeouts": map[string]interface{}{
+			"dial": "10s",
+		},
 		"tls": map[string]interface{}{
 			"enable":       true,
 			"verify":       true,

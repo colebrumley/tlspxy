@@ -89,6 +89,7 @@ server:
     read: "0s"               # Read timeout per connection (e.g. 30s, 5m)
     write: "0s"              # Write timeout per connection
     idle: "300s"             # Idle timeout before closing connection
+    handshake: "10s"         # Client TLS handshake timeout (TLS listeners only)
   tls:
     cert: ""                 # Path to server TLS certificate
     key: ""                  # Path to server TLS private key
@@ -111,6 +112,9 @@ server:
 
 remote:
   addr: ""                   # Backend address (host:port for TCP, URL for HTTP)
+  proxyprotocol: ""          # Send HAProxy PROXY protocol header to backend: "", v1, or v2 (TCP mode only)
+  timeouts:
+    dial: "10s"              # Backend dial (connection establishment) timeout; also bounds backend TLS handshake
   tls:
     enable: true             # Use TLS when connecting to the backend
     verify: true             # Verify backend certificate
@@ -148,6 +152,8 @@ All environment variables use the `TLSPXY_` prefix to avoid collisions with stan
 | `server.trustxff` | `TLSPXY_SERVER_TRUSTXFF` |
 | `server.tls.minversion` | `TLSPXY_SERVER_TLS_MINVERSION` |
 | `remote.addr` | `TLSPXY_REMOTE_ADDR` |
+| `remote.proxyprotocol` | `TLSPXY_REMOTE_PROXYPROTOCOL` |
+| `remote.timeouts.dial` | `TLSPXY_REMOTE_TIMEOUTS_DIAL` |
 | `remote.tls.enable` | `TLSPXY_REMOTE_TLS_ENABLE` |
 | `remote.tls.verify` | `TLSPXY_REMOTE_TLS_VERIFY` |
 | `log.level` | `TLSPXY_LOG_LEVEL` |
@@ -287,7 +293,9 @@ When `http2: true` is set, both the server and the upstream transport are config
 
 ## Forwarded Headers (HTTP/HTTPS)
 
-In `http`/`https` mode the proxy always sets `X-Real-IP` to the real client peer address. By default it treats itself as the trust boundary and **replaces** `X-Forwarded-For` with the real peer, discarding any client-supplied value (which is otherwise spoofable). Set `server.trustxff: true` only when tlspxy sits behind another trusted proxy that sets `X-Forwarded-For`; in that case the real peer is appended to the inbound header instead.
+In `http`/`https` mode the proxy always sets `X-Real-IP` to the real client peer address, and sets `X-Forwarded-Host` (to the inbound `Host`) and `X-Forwarded-Proto` (`https` when the client connection was TLS-terminated, otherwise `http`).
+
+By default it treats itself as the trust boundary and **replaces** `X-Forwarded-For` with the real peer, discarding any client-supplied value (which is otherwise spoofable). Set `server.trustxff: true` only when tlspxy sits behind another trusted proxy that sets `X-Forwarded-For`; in that case the real peer is appended to the inbound header instead.
 
 ## Remote/Backend TLS
 
@@ -353,6 +361,41 @@ remote:
   tls:
     enable: false
 ```
+
+## PROXY Protocol (TCP mode)
+
+In TCP mode, TLS termination hides the real client address from the backend: the
+backend only sees tlspxy's address. To preserve the original client identity,
+tlspxy can prepend a HAProxy [PROXY protocol](https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt)
+header to each new backend connection, carrying the real client source IP/port
+and the local destination IP/port.
+
+```yaml
+server:
+  type: tcp
+remote:
+  addr: "127.0.0.1:8080"
+  proxyprotocol: "v1"   # "" (off, default), "v1" (text), or "v2" (binary)
+```
+
+- `v1` emits a human-readable text line, e.g. `PROXY TCP4 203.0.113.7 198.51.100.2 56324 443\r\n`.
+- `v2` emits the compact binary header (12-byte signature + address block).
+- If the client/destination addresses cannot be resolved to TCP addresses, tlspxy
+  falls back to `PROXY UNKNOWN\r\n` (v1) or the UNSPEC form with a zero-length
+  address block (v2).
+
+The backend must be configured to accept the PROXY protocol (e.g. nginx
+`proxy_protocol`, HAProxy `accept-proxy`). PROXY protocol applies only to TCP
+mode; setting it with `server.type` http/https fails validation.
+
+## Handshake Timeout (TLS listeners)
+
+For TLS listeners, tlspxy completes the client TLS handshake before dialing the
+backend, so bare TCP connections and port scanners never consume a backend
+connection. The handshake is bounded by `server.timeouts.handshake` (default
+`10s`); connections that fail or time out are closed and logged at info level
+without dialing the backend. Non-TLS listeners are unaffected so that
+server-speaks-first protocols (SMTP, MySQL) still work.
 
 ## Metrics
 

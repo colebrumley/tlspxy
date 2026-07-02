@@ -2,9 +2,9 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/tls"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -425,117 +425,133 @@ func TestRoundTrip_Concurrent(t *testing.T) {
 	}
 }
 
-// makeDirector creates a director function matching main.go's logic for testing.
-func makeDirector(target *url.URL, trustXFF bool) func(*http.Request) {
-	return func(req *http.Request) {
-		req.Host = target.Host
-		req.URL.Scheme = target.Scheme
-		req.URL.Host = target.Host
-		req.URL.Path = SingleJoiningSlash(target.Path, req.URL.Path)
-		if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
-			req.Header.Set("X-Real-IP", clientIP)
-			if trustXFF {
-				if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
-					clientIP = prior + ", " + clientIP
-				}
-			}
-			req.Header.Set("X-Forwarded-For", clientIP)
-		}
-		if target.RawQuery == "" || req.URL.RawQuery == "" {
-			req.URL.RawQuery = target.RawQuery + req.URL.RawQuery
-		} else {
-			req.URL.RawQuery = target.RawQuery + "&" + req.URL.RawQuery
-		}
-		if _, ok := req.Header["User-Agent"]; !ok {
-			req.Header.Set("User-Agent", "")
-		}
-	}
+// runRewrite constructs a ProxyRequest the way httputil.ReverseProxy does
+// (Out is a clone of In with hop-by-hop headers already stripped), applies the
+// Rewrite func, and returns the mutated outbound request for assertions.
+func runRewrite(t *testing.T, rewrite func(*httputil.ProxyRequest), in *http.Request) *http.Request {
+	t.Helper()
+	out := in.Clone(in.Context())
+	out.RequestURI = ""
+	pr := &httputil.ProxyRequest{In: in, Out: out}
+	rewrite(pr)
+	return pr.Out
 }
 
-func TestHTTPDirector_XForwardedFor(t *testing.T) {
+func TestNewRewrite_ForwardedHeaders(t *testing.T) {
 	target, _ := url.Parse("http://backend.local:9090/base")
 
-	director := makeDirector(target, false)
+	rewrite := NewRewrite(target, false)
 
 	t.Run("sets X-Forwarded-For and X-Real-IP", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", "http://proxy.local/hello", nil)
-		req.RemoteAddr = "192.168.1.1:12345"
-		director(req)
+		in := httptest.NewRequest("GET", "http://proxy.local/hello", nil)
+		in.RemoteAddr = "192.168.1.1:12345"
+		out := runRewrite(t, rewrite, in)
 
-		if got := req.Header.Get("X-Forwarded-For"); got != "192.168.1.1" {
+		if got := out.Header.Get("X-Forwarded-For"); got != "192.168.1.1" {
 			t.Errorf("X-Forwarded-For = %q, want %q", got, "192.168.1.1")
 		}
-		if got := req.Header.Get("X-Real-IP"); got != "192.168.1.1" {
+		if got := out.Header.Get("X-Real-IP"); got != "192.168.1.1" {
 			t.Errorf("X-Real-IP = %q, want %q", got, "192.168.1.1")
 		}
 	})
 
+	t.Run("sets X-Forwarded-Host and X-Forwarded-Proto (http)", func(t *testing.T) {
+		in := httptest.NewRequest("GET", "http://proxy.local/hello", nil)
+		in.Host = "proxy.local"
+		in.RemoteAddr = "192.168.1.1:12345"
+		out := runRewrite(t, rewrite, in)
+
+		if got := out.Header.Get("X-Forwarded-Host"); got != "proxy.local" {
+			t.Errorf("X-Forwarded-Host = %q, want %q", got, "proxy.local")
+		}
+		if got := out.Header.Get("X-Forwarded-Proto"); got != "http" {
+			t.Errorf("X-Forwarded-Proto = %q, want %q", got, "http")
+		}
+	})
+
+	t.Run("sets X-Forwarded-Proto https on TLS", func(t *testing.T) {
+		in := httptest.NewRequest("GET", "https://proxy.local/hello", nil)
+		in.RemoteAddr = "192.168.1.1:12345"
+		in.TLS = &tls.ConnectionState{}
+		out := runRewrite(t, rewrite, in)
+
+		if got := out.Header.Get("X-Forwarded-Proto"); got != "https" {
+			t.Errorf("X-Forwarded-Proto = %q, want %q", got, "https")
+		}
+	})
+
 	t.Run("resets existing X-Forwarded-For by default", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", "http://proxy.local/hello", nil)
-		req.RemoteAddr = "10.0.0.2:54321"
-		req.Header.Set("X-Forwarded-For", "203.0.113.50")
-		director(req)
+		in := httptest.NewRequest("GET", "http://proxy.local/hello", nil)
+		in.RemoteAddr = "10.0.0.2:54321"
+		in.Header.Set("X-Forwarded-For", "203.0.113.50")
+		out := runRewrite(t, rewrite, in)
 
 		want := "10.0.0.2"
-		if got := req.Header.Get("X-Forwarded-For"); got != want {
+		if got := out.Header.Get("X-Forwarded-For"); got != want {
 			t.Errorf("X-Forwarded-For = %q, want %q", got, want)
 		}
-		if got := req.Header.Get("X-Real-IP"); got != "10.0.0.2" {
+		if got := out.Header.Get("X-Real-IP"); got != "10.0.0.2" {
 			t.Errorf("X-Real-IP = %q, want %q", got, "10.0.0.2")
 		}
 	})
 
 	t.Run("appends to existing X-Forwarded-For when trusted", func(t *testing.T) {
-		d := makeDirector(target, true)
-		req, _ := http.NewRequest("GET", "http://proxy.local/hello", nil)
-		req.RemoteAddr = "10.0.0.2:54321"
-		req.Header.Set("X-Forwarded-For", "203.0.113.50")
-		d(req)
+		trusted := NewRewrite(target, true)
+		in := httptest.NewRequest("GET", "http://proxy.local/hello", nil)
+		in.RemoteAddr = "10.0.0.2:54321"
+		in.Header.Set("X-Forwarded-For", "203.0.113.50")
+		out := runRewrite(t, trusted, in)
 
 		want := "203.0.113.50, 10.0.0.2"
-		if got := req.Header.Get("X-Forwarded-For"); got != want {
+		if got := out.Header.Get("X-Forwarded-For"); got != want {
 			t.Errorf("X-Forwarded-For = %q, want %q", got, want)
 		}
 	})
 
 	t.Run("rewrites URL", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", "http://proxy.local/api/resource", nil)
-		req.RemoteAddr = "127.0.0.1:1234"
-		director(req)
+		in := httptest.NewRequest("GET", "http://proxy.local/api/resource", nil)
+		in.RemoteAddr = "127.0.0.1:1234"
+		out := runRewrite(t, rewrite, in)
 
-		if req.URL.Scheme != "http" {
-			t.Errorf("scheme = %q, want %q", req.URL.Scheme, "http")
+		if out.URL.Scheme != "http" {
+			t.Errorf("scheme = %q, want %q", out.URL.Scheme, "http")
 		}
-		if req.URL.Host != "backend.local:9090" {
-			t.Errorf("host = %q, want %q", req.URL.Host, "backend.local:9090")
+		if out.URL.Host != "backend.local:9090" {
+			t.Errorf("host = %q, want %q", out.URL.Host, "backend.local:9090")
+		}
+		if out.Host != "backend.local:9090" {
+			t.Errorf("Host header = %q, want %q", out.Host, "backend.local:9090")
 		}
 		want := "/base/api/resource"
-		if req.URL.Path != want {
-			t.Errorf("path = %q, want %q", req.URL.Path, want)
+		if out.URL.Path != want {
+			t.Errorf("path = %q, want %q", out.URL.Path, want)
 		}
 	})
 
 	t.Run("sets empty User-Agent when absent", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", "http://proxy.local/", nil)
-		req.RemoteAddr = "127.0.0.1:1234"
-		delete(req.Header, "User-Agent")
-		director(req)
+		in := httptest.NewRequest("GET", "http://proxy.local/", nil)
+		in.RemoteAddr = "127.0.0.1:1234"
+		delete(in.Header, "User-Agent")
+		out := runRewrite(t, rewrite, in)
 
-		if got := req.Header.Get("User-Agent"); got != "" {
+		if _, ok := out.Header["User-Agent"]; !ok {
+			t.Error("User-Agent header not set")
+		}
+		if got := out.Header.Get("User-Agent"); got != "" {
 			t.Errorf("User-Agent = %q, want empty", got)
 		}
 	})
 
 	t.Run("query string merging", func(t *testing.T) {
 		targetWithQuery, _ := url.Parse("http://backend.local:9090/base?key=val")
-		d := makeDirector(targetWithQuery, false)
+		d := NewRewrite(targetWithQuery, false)
 
-		req, _ := http.NewRequest("GET", "http://proxy.local/path?foo=bar", nil)
-		req.RemoteAddr = "127.0.0.1:1234"
-		d(req)
+		in := httptest.NewRequest("GET", "http://proxy.local/path?foo=bar", nil)
+		in.RemoteAddr = "127.0.0.1:1234"
+		out := runRewrite(t, d, in)
 
-		if req.URL.RawQuery != "key=val&foo=bar" {
-			t.Errorf("RawQuery = %q, want %q", req.URL.RawQuery, "key=val&foo=bar")
+		if out.URL.RawQuery != "key=val&foo=bar" {
+			t.Errorf("RawQuery = %q, want %q", out.URL.RawQuery, "key=val&foo=bar")
 		}
 	})
 }
@@ -575,7 +591,7 @@ func TestHTTPReverseProxy_EndToEnd(t *testing.T) {
 	}
 
 	rp := &httputil.ReverseProxy{
-		Director:  makeDirector(backendURL, false),
+		Rewrite:   NewRewrite(backendURL, false),
 		Transport: proxy,
 	}
 

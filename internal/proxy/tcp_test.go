@@ -260,14 +260,22 @@ func TestTCPProxy_DialTimeout(t *testing.T) {
 		Ctx:         context.Background(),
 		CloseOnce:   sync.Once{},
 		Log:         testLog(),
+		// Explicit short dial timeout so an unroutable backend fails fast
+		// instead of relying on the 30s zero-value default.
+		DialTimeout: 2 * time.Second,
 	}
 
+	start := time.Now()
 	go proxy.Start()
 
 	select {
 	case <-errSignal:
 	case <-time.After(35 * time.Second):
 		t.Fatal("TCPProxy.Start() hung - no ErrorSignal received within 35s")
+	}
+	// With a 2s DialTimeout the dial must give up well before the 30s default.
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("dial took %v; DialTimeout field does not appear to be honored", elapsed)
 	}
 }
 

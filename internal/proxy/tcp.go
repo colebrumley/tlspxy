@@ -61,6 +61,18 @@ type TCPProxy struct {
 	ReadTimeout            time.Duration
 	WriteTimeout           time.Duration
 	IdleTimeout            time.Duration
+	// HandshakeTimeout bounds the client TLS handshake when the server-side
+	// connection is a *tls.Conn. Defaults to 10s when zero.
+	HandshakeTimeout time.Duration
+	// DialTimeout bounds backend connection establishment (TCP dial, plus TLS
+	// handshake for TLS backends). Defaults to 30s when zero to preserve the
+	// historical behavior for direct constructors (e.g. tests); main.go wires
+	// the configured remote.timeouts.dial value (default 10s).
+	DialTimeout time.Duration
+	// ProxyProto, when set to "v1" or "v2", causes a HAProxy PROXY protocol
+	// header carrying the real client source/destination to be written as the
+	// first bytes on each backend connection.
+	ProxyProto string
 }
 
 func (p *TCPProxy) err(s string, err error) {
@@ -103,13 +115,44 @@ func (p *TCPProxy) Start() {
 	p.connCtx = connCtx
 	defer connCancel()
 
+	// If the server-side connection is a TLS connection, complete the client
+	// handshake before dialing the backend. Go's tls.Listener handshakes
+	// lazily on first read, so without this gate any bare TCP connection (port
+	// scanners, health probes) would consume a backend connection. Only after a
+	// successful handshake do we dial. Non-TLS listeners skip this so
+	// server-speaks-first protocols (SMTP, MySQL) still work.
+	if tlsConn, ok := p.ServerConn.(*tls.Conn); ok {
+		hsTimeout := p.HandshakeTimeout
+		if hsTimeout <= 0 {
+			hsTimeout = 10 * time.Second
+		}
+		hsCtx, hsCancel := context.WithTimeout(p.Ctx, hsTimeout)
+		err := tlsConn.HandshakeContext(hsCtx)
+		hsCancel()
+		if err != nil {
+			// Logged at Info, not Warn/Error: failed handshakes are routine
+			// (port scanners, bare TCP probes) and must not spam error logs or
+			// consume a backend connection.
+			p.Log.Info("Client TLS handshake failed, closing without dialing backend",
+				"src", p.ServerConn.RemoteAddr().String(),
+				"error", err,
+			)
+			p.CloseOnce.Do(func() { p.ErrorSignal <- true })
+			return
+		}
+	}
+
 	var (
 		rConn net.Conn
 		err   error
 		isTLS bool
 	)
 
-	dialCtx, dialCancel := context.WithTimeout(p.Ctx, 30*time.Second)
+	dialTimeout := p.DialTimeout
+	if dialTimeout <= 0 {
+		dialTimeout = 30 * time.Second
+	}
+	dialCtx, dialCancel := context.WithTimeout(p.Ctx, dialTimeout)
 	defer dialCancel()
 
 	if p.RemoteTLSConf != nil {
@@ -131,6 +174,29 @@ func (p *TCPProxy) Start() {
 	}
 	p.RemoteConn = rConn
 	defer p.RemoteConn.Close()
+
+	// Send the PROXY protocol header (if configured) as the first bytes on the
+	// backend connection, carrying the real client source and the local
+	// destination address.
+	if p.ProxyProto != "" {
+		hdr, herr := ProxyHeader(p.ProxyProto, p.ServerConn.RemoteAddr(), p.ServerConn.LocalAddr())
+		if herr != nil {
+			p.err("Failed to build PROXY protocol header", herr)
+			return
+		}
+		if len(hdr) > 0 {
+			if p.WriteTimeout > 0 {
+				p.RemoteConn.SetWriteDeadline(time.Now().Add(p.WriteTimeout))
+			}
+			if _, werr := p.RemoteConn.Write(hdr); werr != nil {
+				p.err("Failed to write PROXY protocol header", werr)
+				return
+			}
+			if p.WriteTimeout > 0 {
+				p.RemoteConn.SetWriteDeadline(time.Time{})
+			}
+		}
+	}
 
 	p.Log.Info("Connection opened",
 		"src", p.ServerConn.RemoteAddr().String(),

@@ -11,3 +11,10 @@ linters:
     - gosimple
     - ineffassign
     - gocritic
+
+linters-settings:
+  gocritic:
+    disabled-checks:
+      # main() fails closed via os.Exit after `defer rootCancel()`; the defer
+      # exists to satisfy govet's lostcancel and is moot on exit paths.
+      - exitAfterDefer

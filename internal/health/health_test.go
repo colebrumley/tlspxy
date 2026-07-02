@@ -46,7 +46,7 @@ func TestCheckMiddleware_ProxiesOtherPaths(t *testing.T) {
 	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		backendCalled = true
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("backend"))
+		_, _ = w.Write([]byte("backend"))
 	})
 
 	handler := CheckMiddleware("/healthz", backend)

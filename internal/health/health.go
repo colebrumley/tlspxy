@@ -10,7 +10,7 @@ func CheckMiddleware(path string, next http.Handler) http.Handler {
 		if r.URL.Path == path {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"ok"}`))
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
 			return
 		}
 		next.ServeHTTP(w, r)

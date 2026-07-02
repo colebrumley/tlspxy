@@ -135,7 +135,9 @@ func TestCertStore_Reload_InvalidCert(t *testing.T) {
 	origCert, _ := store.GetCertificate(&cryptotls.ClientHelloInfo{})
 
 	// Write invalid cert data
-	os.WriteFile(tmpCert, []byte("not a cert"), 0644)
+	if err := os.WriteFile(tmpCert, []byte("not a cert"), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
 
 	if err := store.Reload(); err == nil {
 		t.Error("expected error when reloading invalid cert")
@@ -189,7 +191,7 @@ func TestCertStore_ConcurrentGetCertificateDuringReload(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			store.Reload()
+			_ = store.Reload()
 		}()
 	}
 	wg.Wait()
@@ -278,7 +280,9 @@ func TestCertStore_ReloadAll(t *testing.T) {
 
 func TestParseSNIConfig_Empty(t *testing.T) {
 	k := koanf.New(".")
-	k.Load(confmap.Provider(map[string]interface{}{}, "."), nil)
+	if err := k.Load(confmap.Provider(map[string]interface{}{}, "."), nil); err != nil {
+		t.Fatalf("k.Load() error = %v", err)
+	}
 
 	entries, err := ParseSNIConfig(k)
 	if err != nil {
@@ -291,7 +295,7 @@ func TestParseSNIConfig_Empty(t *testing.T) {
 
 func TestParseSNIConfig_Valid(t *testing.T) {
 	k := koanf.New(".")
-	k.Load(confmap.Provider(map[string]interface{}{
+	if err := k.Load(confmap.Provider(map[string]interface{}{
 		"server": map[string]interface{}{
 			"tls": map[string]interface{}{
 				"sni": []interface{}{
@@ -303,7 +307,9 @@ func TestParseSNIConfig_Valid(t *testing.T) {
 				},
 			},
 		},
-	}, "."), nil)
+	}, "."), nil); err != nil {
+		t.Fatalf("k.Load() error = %v", err)
+	}
 
 	entries, err := ParseSNIConfig(k)
 	if err != nil {
@@ -319,7 +325,7 @@ func TestParseSNIConfig_Valid(t *testing.T) {
 
 func TestParseSNIConfig_MissingHostname(t *testing.T) {
 	k := koanf.New(".")
-	k.Load(confmap.Provider(map[string]interface{}{
+	if err := k.Load(confmap.Provider(map[string]interface{}{
 		"server": map[string]interface{}{
 			"tls": map[string]interface{}{
 				"sni": []interface{}{
@@ -330,7 +336,9 @@ func TestParseSNIConfig_MissingHostname(t *testing.T) {
 				},
 			},
 		},
-	}, "."), nil)
+	}, "."), nil); err != nil {
+		t.Fatalf("k.Load() error = %v", err)
+	}
 
 	_, err := ParseSNIConfig(k)
 	if err == nil {
@@ -340,7 +348,7 @@ func TestParseSNIConfig_MissingHostname(t *testing.T) {
 
 func TestParseSNIConfig_MissingCert(t *testing.T) {
 	k := koanf.New(".")
-	k.Load(confmap.Provider(map[string]interface{}{
+	if err := k.Load(confmap.Provider(map[string]interface{}{
 		"server": map[string]interface{}{
 			"tls": map[string]interface{}{
 				"sni": []interface{}{
@@ -351,7 +359,9 @@ func TestParseSNIConfig_MissingCert(t *testing.T) {
 				},
 			},
 		},
-	}, "."), nil)
+	}, "."), nil); err != nil {
+		t.Fatalf("k.Load() error = %v", err)
+	}
 
 	_, err := ParseSNIConfig(k)
 	if err == nil {

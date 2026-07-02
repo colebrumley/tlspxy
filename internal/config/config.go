@@ -210,14 +210,15 @@ func ParseConfigPaths(args []string) []string {
 	var paths []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if arg == "-config" || arg == "--config" {
+		switch {
+		case arg == "-config" || arg == "--config":
 			if i+1 < len(args) {
 				i++
 				paths = append(paths, args[i])
 			}
-		} else if strings.HasPrefix(arg, "-config=") {
+		case strings.HasPrefix(arg, "-config="):
 			paths = append(paths, strings.TrimPrefix(arg, "-config="))
-		} else if strings.HasPrefix(arg, "--config=") {
+		case strings.HasPrefix(arg, "--config="):
 			paths = append(paths, strings.TrimPrefix(arg, "--config="))
 		}
 	}
@@ -316,9 +317,11 @@ func loadConfigFile(k *koanf.Koanf, path string) error {
 // before mapping to config keys. For example, TLSPXY_SERVER_ADDR maps to
 // server.addr.
 func LoadEnvVars(k *koanf.Koanf) {
-	k.Load(env.Provider("TLSPXY_", ".", func(s string) string {
-		return strings.Replace(strings.ToLower(strings.TrimPrefix(s, "TLSPXY_")), "_", ".", -1)
-	}), nil)
+	if err := k.Load(env.Provider("TLSPXY_", ".", func(s string) string {
+		return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(s, "TLSPXY_")), "_", ".")
+	}), nil); err != nil {
+		slog.Warn("Failed to load environment variables", "error", err)
+	}
 }
 
 // LoadFlags loads CLI flags into k.
@@ -355,14 +358,16 @@ func LoadFlags(k *koanf.Koanf, appVersion, commitID string) {
 
 	// Use ProviderWithValue to convert dash-delimited flag names to
 	// dot-delimited koanf keys (e.g., "server-addr" → "server.addr").
-	k.Load(basicflag.ProviderWithValue(flag.CommandLine, ".", func(key string, value string) (string, interface{}) {
+	if err := k.Load(basicflag.ProviderWithValue(flag.CommandLine, ".", func(key string, value string) (string, interface{}) {
 		// Skip the "config" flag — it's handled separately.
 		if key == "config" {
 			return "", nil
 		}
 		koanfKey := strings.ReplaceAll(key, "-", ".")
 		return koanfKey, value
-	}, k), nil)
+	}, k), nil); err != nil {
+		slog.Warn("Failed to load CLI flags", "error", err)
+	}
 }
 
 // RegisterFlags recursively registers flags for all leaf values in the config map.
@@ -426,11 +431,11 @@ func PrettyPrintFlagMap(m map[string]interface{}, prefix ...string) {
 		if len(prefix) > 0 {
 			flagName = "-" + strings.Join(prefix, "-") + "-" + k
 		}
-		switch v.(type) {
+		switch v := v.(type) {
 		case string, int, bool:
 			fmt.Printf("  %s=%+v\n", flagName, v)
 		case map[string]interface{}:
-			PrettyPrintFlagMap(v.(map[string]interface{}), append(prefix, k)...)
+			PrettyPrintFlagMap(v, append(prefix, k)...)
 		}
 	}
 }
@@ -536,7 +541,9 @@ func ValidateConfig(k *koanf.Koanf) error {
 	// 8. Normalize "warning" log level to "warn"
 	logLevel := k.String("log.level")
 	if strings.EqualFold(logLevel, "warning") {
-		k.Set("log.level", "warn")
+		if err := k.Set("log.level", "warn"); err != nil {
+			return fmt.Errorf("normalizing log.level: %w", err)
+		}
 	}
 
 	// 9. server.http2 is only valid for http/https modes

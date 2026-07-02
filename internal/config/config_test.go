@@ -22,7 +22,7 @@ func TestGetConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	tmpDir, err := os.MkdirTemp("", "tlspxy-config-test")
 	if err != nil {
@@ -76,7 +76,7 @@ func TestGetConfig_NoFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	tmpDir, err := os.MkdirTemp("", "tlspxy-config-empty")
 	if err != nil {
@@ -135,7 +135,7 @@ func TestGetConfig_NonYAMLIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	tmpDir, err := os.MkdirTemp("", "tlspxy-config-nonyaml")
 	if err != nil {
@@ -173,7 +173,7 @@ func TestGetConfig_ExtraPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	// Create an empty working directory so no configs are auto-loaded
 	emptyDir, err := os.MkdirTemp("", "tlspxy-config-empty")
@@ -223,7 +223,7 @@ func TestGetConfig_MarkerRequiredForAutoDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	tmpDir, err := os.MkdirTemp("", "tlspxy-config-marker")
 	if err != nil {
@@ -266,7 +266,7 @@ func TestGetConfig_ExplicitFileNoMarkerRequired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	// Empty working dir so auto-discovery loads nothing.
 	emptyDir, err := os.MkdirTemp("", "tlspxy-config-empty")
@@ -363,7 +363,7 @@ func TestPrettyPrintFlagMap(t *testing.T) {
 
 			w.Close()
 			var buf bytes.Buffer
-			io.Copy(&buf, r)
+			_, _ = io.Copy(&buf, r)
 			os.Stdout = old
 
 			output := buf.String()
@@ -379,7 +379,7 @@ func TestPrettyPrintFlagMap(t *testing.T) {
 // newTestKoanf creates a koanf instance from a map for testing.
 func newTestKoanf(m map[string]interface{}) *koanf.Koanf {
 	k := koanf.New(".")
-	k.Load(confmap.Provider(m, "."), nil)
+	_ = k.Load(confmap.Provider(m, "."), nil)
 	return k
 }
 

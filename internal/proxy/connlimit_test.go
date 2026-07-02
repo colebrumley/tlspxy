@@ -69,13 +69,11 @@ func TestIntegration_TCP_MaxConns_RejectsExcess(t *testing.T) {
 		}
 	}()
 
-	var conns []net.Conn
 	for i := 0; i < maxConns; i++ {
 		c, err := net.DialTimeout("tcp", proxyAddr, testTimeout)
 		if err != nil {
 			t.Fatalf("Failed to connect (conn %d): %v", i, err)
 		}
-		conns = append(conns, c)
 		t.Cleanup(func() { c.Close() })
 	}
 
@@ -87,7 +85,9 @@ func TestIntegration_TCP_MaxConns_RejectsExcess(t *testing.T) {
 	}
 	defer excess.Close()
 
-	excess.SetDeadline(time.Now().Add(500 * time.Millisecond))
+	if derr := excess.SetDeadline(time.Now().Add(500 * time.Millisecond)); derr != nil {
+		t.Fatalf("SetDeadline failed: %v", derr)
+	}
 	_, err = excess.Write([]byte("hello"))
 	if err != nil {
 		return
@@ -154,7 +154,7 @@ func TestIntegration_TCP_MaxConns_Zero_Unlimited(t *testing.T) {
 
 	for i, c := range conns {
 		testData := fmt.Sprintf("hello-%d", i)
-		c.SetDeadline(time.Now().Add(testTimeout))
+		_ = c.SetDeadline(time.Now().Add(testTimeout))
 		if _, err := c.Write([]byte(testData)); err != nil {
 			t.Fatalf("Write failed on conn %d: %v", i, err)
 		}
@@ -228,7 +228,7 @@ func TestIntegration_TCP_MaxConns_ReleasesSlot(t *testing.T) {
 		t.Fatalf("Failed to connect first: %v", err)
 	}
 
-	c1.SetDeadline(time.Now().Add(testTimeout))
+	_ = c1.SetDeadline(time.Now().Add(testTimeout))
 	if _, err := c1.Write([]byte("first")); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestIntegration_TCP_MaxConns_ReleasesSlot(t *testing.T) {
 	}
 	defer c2.Close()
 
-	c2.SetDeadline(time.Now().Add(testTimeout))
+	_ = c2.SetDeadline(time.Now().Add(testTimeout))
 	if _, err := c2.Write([]byte("second")); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
@@ -331,11 +331,11 @@ func TestIntegration_HTTP_MaxConns_RejectsExcess(t *testing.T) {
 		},
 	}
 
-	go srv.Serve(proxyLn)
+	go func() { _ = srv.Serve(proxyLn) }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		_ = srv.Shutdown(ctx)
 	})
 
 	var rawConns []net.Conn
@@ -356,7 +356,7 @@ func TestIntegration_HTTP_MaxConns_RejectsExcess(t *testing.T) {
 	}
 	defer excess.Close()
 
-	excess.SetDeadline(time.Now().Add(500 * time.Millisecond))
+	_ = excess.SetDeadline(time.Now().Add(500 * time.Millisecond))
 	_, err = excess.Write([]byte("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"))
 	if err != nil {
 		return
@@ -408,11 +408,11 @@ func TestIntegration_HTTP_MaxConns_Zero_Unlimited(t *testing.T) {
 	}
 
 	srv := &http.Server{Handler: rp}
-	go srv.Serve(proxyLn)
+	go func() { _ = srv.Serve(proxyLn) }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		_ = srv.Shutdown(ctx)
 	})
 
 	httpClient := &http.Client{Timeout: testTimeout}

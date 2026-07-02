@@ -166,7 +166,7 @@ func RunScenario(s Scenario, certDir string) (*Result, error) {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					h.TriggerReload()
+					_ = h.TriggerReload()
 				}
 			}
 		}()

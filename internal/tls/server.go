@@ -53,7 +53,8 @@ func GetServerConfig(k *koanf.Koanf) (*cryptotls.Config, *CertStore, error) {
 
 	// Check for whether server.tls.letsencrypt.enable is true,
 	// and load a LetsEncrypt cert if so.
-	if useLetsencrypt {
+	switch {
+	case useLetsencrypt:
 		slog.Debug("Enabling LetsEncrypt on Server connection")
 		m := autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
@@ -75,7 +76,7 @@ func GetServerConfig(k *koanf.Koanf) (*cryptotls.Config, *CertStore, error) {
 		if opts.NextProtos != nil {
 			tlsConf.NextProtos = opts.NextProtos
 		}
-	} else if len(cert) > 0 || len(key) > 0 {
+	case len(cert) > 0 || len(key) > 0:
 		// Create a CertStore for hot-reload support
 		store, err = NewCertStore(cert, key)
 		if err != nil {
@@ -124,7 +125,7 @@ func GetServerConfig(k *koanf.Koanf) (*cryptotls.Config, *CertStore, error) {
 		}
 
 		slog.Debug("Loaded Server TLS config", "cert", cert, "key", key, "ca", ca)
-	} else {
+	default:
 		slog.Warn("No server TLS config loaded")
 		slog.Info("Proceeding with non-TLS server")
 	}

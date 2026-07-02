@@ -141,7 +141,7 @@ func TestTCPProxy_Pipe(t *testing.T) {
 	// Send data from "server" (client) side to "remote" side
 	testData := []byte("hello from server") // 17 bytes
 	go func() {
-		serverClient.Write(testData)
+		_, _ = serverClient.Write(testData)
 	}()
 
 	// Read from "remote" side
@@ -157,7 +157,7 @@ func TestTCPProxy_Pipe(t *testing.T) {
 	// Send data from "remote" side to "server" (client) side
 	testData2 := []byte("hello from remote") // 17 bytes
 	go func() {
-		remoteServer.Write(testData2)
+		_, _ = remoteServer.Write(testData2)
 	}()
 
 	buf2 := make([]byte, 1024)
@@ -308,7 +308,7 @@ func startEchoServer(t *testing.T) net.Listener {
 			return
 		}
 		defer conn.Close()
-		io.Copy(conn, conn)
+		_, _ = io.Copy(conn, conn)
 	}()
 	return ln
 }
@@ -339,7 +339,7 @@ func TestTCPProxy_Start_HappyPath(t *testing.T) {
 
 	testMsg := []byte("hello echo server")
 	go func() {
-		clientEnd.Write(testMsg)
+		_, _ = clientEnd.Write(testMsg)
 	}()
 
 	buf := make([]byte, 1024)
@@ -408,7 +408,7 @@ func TestTCPProxy_Start_CleanClose_NoErrorLog(t *testing.T) {
 
 	testMsg := []byte("hello echo server")
 	go func() {
-		clientEnd.Write(testMsg)
+		_, _ = clientEnd.Write(testMsg)
 	}()
 
 	buf := make([]byte, 1024)
@@ -522,7 +522,7 @@ func TestTCPProxy_Start_WithTLS(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		io.Copy(conn, conn)
+		_, _ = io.Copy(conn, conn)
 	}()
 
 	clientEnd, serverProxy := net.Pipe()
@@ -551,7 +551,7 @@ func TestTCPProxy_Start_WithTLS(t *testing.T) {
 
 	testMsg := []byte("hello tls server")
 	go func() {
-		clientEnd.Write(testMsg)
+		_, _ = clientEnd.Write(testMsg)
 	}()
 
 	buf := make([]byte, 1024)
@@ -607,7 +607,7 @@ func TestTCPProxy_Pipe_WriteFail(t *testing.T) {
 	go proxy.Pipe(proxy.ServerConn, proxy.RemoteConn)
 
 	go func() {
-		serverClient.Write([]byte("will fail"))
+		_, _ = serverClient.Write([]byte("will fail"))
 		serverClient.Close()
 	}()
 
@@ -724,7 +724,7 @@ func TestTCPProxy_Pipe_ZeroTimeouts(t *testing.T) {
 
 	testData := []byte("hello zero timeouts")
 	go func() {
-		serverClient.Write(testData)
+		_, _ = serverClient.Write(testData)
 	}()
 
 	buf := make([]byte, 1024)
@@ -738,7 +738,7 @@ func TestTCPProxy_Pipe_ZeroTimeouts(t *testing.T) {
 
 	testData2 := []byte("reply zero timeouts")
 	go func() {
-		remoteServer.Write(testData2)
+		_, _ = remoteServer.Write(testData2)
 	}()
 
 	buf2 := make([]byte, 1024)

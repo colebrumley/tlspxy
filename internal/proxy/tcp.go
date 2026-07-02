@@ -186,14 +186,18 @@ func (p *TCPProxy) Start() {
 		}
 		if len(hdr) > 0 {
 			if p.WriteTimeout > 0 {
-				p.RemoteConn.SetWriteDeadline(time.Now().Add(p.WriteTimeout))
+				if derr := p.RemoteConn.SetWriteDeadline(time.Now().Add(p.WriteTimeout)); derr != nil {
+					p.Log.Debug("Failed to set write deadline", "error", derr)
+				}
 			}
 			if _, werr := p.RemoteConn.Write(hdr); werr != nil {
 				p.err("Failed to write PROXY protocol header", werr)
 				return
 			}
 			if p.WriteTimeout > 0 {
-				p.RemoteConn.SetWriteDeadline(time.Time{})
+				if derr := p.RemoteConn.SetWriteDeadline(time.Time{}); derr != nil {
+					p.Log.Debug("Failed to clear write deadline", "error", derr)
+				}
 			}
 		}
 	}
@@ -273,9 +277,13 @@ func (p *TCPProxy) Pipe(src, dst net.Conn) {
 		// Set read deadline: use IdleTimeout for reads (time waiting for data),
 		// or ReadTimeout if set and IdleTimeout is not.
 		if p.IdleTimeout > 0 {
-			src.SetReadDeadline(time.Now().Add(p.IdleTimeout))
+			if derr := src.SetReadDeadline(time.Now().Add(p.IdleTimeout)); derr != nil {
+				p.Log.Debug("Failed to set read deadline", "error", derr)
+			}
 		} else if p.ReadTimeout > 0 {
-			src.SetReadDeadline(time.Now().Add(p.ReadTimeout))
+			if derr := src.SetReadDeadline(time.Now().Add(p.ReadTimeout)); derr != nil {
+				p.Log.Debug("Failed to set read deadline", "error", derr)
+			}
 		}
 
 		n, err := src.Read(buff)
@@ -305,7 +313,9 @@ func (p *TCPProxy) Pipe(src, dst net.Conn) {
 
 		// Set write deadline if configured.
 		if p.WriteTimeout > 0 {
-			dst.SetWriteDeadline(time.Now().Add(p.WriteTimeout))
+			if derr := dst.SetWriteDeadline(time.Now().Add(p.WriteTimeout)); derr != nil {
+				p.Log.Debug("Failed to set write deadline", "error", derr)
+			}
 		}
 
 		written := 0

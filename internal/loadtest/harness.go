@@ -142,7 +142,7 @@ func (h *TestHarness) setupTCP(ctx context.Context, cfg HarnessConfig) error {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				io.Copy(c, c)
+				_, _ = io.Copy(c, c)
 			}(conn)
 		}
 	}()
@@ -236,7 +236,7 @@ func (h *TestHarness) setupHTTP(ctx context.Context, cfg HarnessConfig) error {
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(responseBody)
+		_, _ = w.Write(responseBody)
 	}))
 	// Track the backend via a stub listener so Close() can shut it down.
 	// httptest.Server manages its own listener, so we record nil for backendLn

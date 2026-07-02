@@ -133,7 +133,7 @@ func BenchmarkHTTP_TLS(b *testing.B) {
 		if err != nil {
 			b.Fatalf("HTTP GET: %v", err)
 		}
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 	}
 	b.StopTimer()

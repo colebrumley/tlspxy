@@ -371,7 +371,7 @@ type threadSafeRoundTripper struct {
 
 func (m *threadSafeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Body != nil {
-		io.ReadAll(req.Body)
+		_, _ = io.ReadAll(req.Body)
 		req.Body.Close()
 	}
 	m.mu.Lock()
@@ -408,7 +408,7 @@ func TestRoundTrip_Concurrent(t *testing.T) {
 				t.Errorf("RoundTrip error: %v", err)
 				return
 			}
-			io.ReadAll(resp.Body)
+			_, _ = io.ReadAll(resp.Body)
 			resp.Body.Close()
 		}()
 	}
@@ -579,7 +579,7 @@ func TestHTTPReverseProxy_EndToEnd(t *testing.T) {
 		mu.Unlock()
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(200)
-		w.Write([]byte("backend-response"))
+		_, _ = w.Write([]byte("backend-response"))
 	}))
 	defer backend.Close()
 

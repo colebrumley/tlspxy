@@ -113,7 +113,9 @@ func main() {
 		shm.AddHandler(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			metricsSrv.Shutdown(ctx)
+			if serr := metricsSrv.Shutdown(ctx); serr != nil {
+				slog.Debug("Metrics server shutdown error", "error", serr)
+			}
 		}, os.Interrupt, syscall.SIGTERM)
 	}
 
@@ -398,13 +400,19 @@ func main() {
 		shm.AddHandler(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			srv.Shutdown(ctx)
+			if err := srv.Shutdown(ctx); err != nil {
+				slog.Debug("HTTP server shutdown error", "error", err)
+			}
 		}, os.Interrupt, syscall.SIGTERM)
 
 		if k.Bool("server.http2") {
-			http2.ConfigureServer(srv, &http2.Server{})
+			if err := http2.ConfigureServer(srv, &http2.Server{}); err != nil {
+				slog.Error("Failed to configure HTTP/2 server", "error", err)
+			}
 			if baseTransport, ok := pt.RoundTripper.(*http.Transport); ok {
-				http2.ConfigureTransport(baseTransport)
+				if err := http2.ConfigureTransport(baseTransport); err != nil {
+					slog.Error("Failed to configure HTTP/2 transport", "error", err)
+				}
 			}
 			slog.Info("HTTP/2 enabled")
 		}

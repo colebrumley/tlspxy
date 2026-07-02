@@ -30,7 +30,7 @@ func TestTCPProxy_SendsProxyProtocolV1(t *testing.T) {
 		defer conn.Close()
 		var acc []byte
 		buf := make([]byte, 512)
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		for {
 			n, err := conn.Read(buf)
 			acc = append(acc, buf[:n]...)
@@ -78,7 +78,7 @@ func TestTCPProxy_SendsProxyProtocolV1(t *testing.T) {
 	// Client sends a payload after connection is proxied.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		clientConn.Write([]byte("PAYLOAD"))
+		_, _ = clientConn.Write([]byte("PAYLOAD"))
 	}()
 
 	select {
@@ -137,7 +137,7 @@ func TestTCPProxy_HandshakeGate_NoBackendDial(t *testing.T) {
 		t.Fatalf("client dial: %v", err)
 	}
 	defer client.Close()
-	client.Write([]byte("this is not a tls handshake"))
+	_, _ = client.Write([]byte("this is not a tls handshake"))
 
 	serverConn, err := tlsLn.Accept()
 	if err != nil {

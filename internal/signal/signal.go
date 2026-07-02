@@ -28,8 +28,7 @@ func (shm *SigHandlerMux) AddHandler(fn func(), sigs ...os.Signal) {
 	shm.mu.Lock()
 	defer shm.mu.Unlock()
 	for _, sig := range sigs {
-		handlers := append(shm.do[sig], fn)
-		shm.do[sig] = handlers
+		shm.do[sig] = append(shm.do[sig], fn)
 	}
 }
 
@@ -38,22 +37,19 @@ func (shm *SigHandlerMux) AddHandler(fn func(), sigs ...os.Signal) {
 func (shm *SigHandlerMux) WatchForSignals() {
 	signals := make(chan os.Signal, 1)
 	ossignal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	for {
-		select {
-		case s := <-signals:
-			slog.Warn(fmt.Sprintf("Trapped signal: %v", s))
-			shm.mu.RLock()
-			handlers := shm.do[s]
-			shm.mu.RUnlock()
-			wg := sync.WaitGroup{}
-			for _, fn := range handlers {
-				wg.Add(1)
-				go func(f func()) {
-					f()
-					wg.Done()
-				}(fn)
-			}
-			wg.Wait()
+	for s := range signals {
+		slog.Warn(fmt.Sprintf("Trapped signal: %v", s))
+		shm.mu.RLock()
+		handlers := shm.do[s]
+		shm.mu.RUnlock()
+		wg := sync.WaitGroup{}
+		for _, fn := range handlers {
+			wg.Add(1)
+			go func(f func()) {
+				f()
+				wg.Done()
+			}(fn)
 		}
+		wg.Wait()
 	}
 }

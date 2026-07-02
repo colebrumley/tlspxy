@@ -41,7 +41,7 @@ func integrationEchoServer(t *testing.T) (addr string, cleanup func()) {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				io.Copy(c, c)
+				_, _ = io.Copy(c, c)
 			}(conn)
 		}
 	}()
@@ -69,7 +69,7 @@ func integrationTLSEchoServer(t *testing.T, certFile, keyFile, caFile string) (a
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				io.Copy(c, c)
+				_, _ = io.Copy(c, c)
 			}(conn)
 		}
 	}()
@@ -173,7 +173,7 @@ func TestIntegration_PlaintextPassthrough(t *testing.T) {
 	}
 
 	testData := "Hello plaintext passthrough"
-	conn.SetDeadline(time.Now().Add(testTimeout))
+	_ = conn.SetDeadline(time.Now().Add(testTimeout))
 	if _, err := conn.Write([]byte(testData)); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestIntegration_TLSTermination_TCP(t *testing.T) {
 	}
 
 	testData := "Hello through TLS termination proxy"
-	conn.SetDeadline(time.Now().Add(testTimeout))
+	_ = conn.SetDeadline(time.Now().Add(testTimeout))
 	if _, err := conn.Write([]byte(testData)); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
@@ -373,15 +373,11 @@ func TestIntegration_TLSTermination_HTTP(t *testing.T) {
 	}
 
 	srv := &http.Server{Handler: rp}
-	go func() {
-		if err := srv.Serve(tlsLn); err != nil && err != http.ErrServerClosed {
-			// Server stopped
-		}
-	}()
+	go func() { _ = srv.Serve(tlsLn) }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		_ = srv.Shutdown(ctx)
 	})
 
 	caPool := loadTestCAPool(t, caFile)
@@ -521,7 +517,7 @@ func TestIntegration_TLSBothSides(t *testing.T) {
 	}
 
 	testData := "Hello through double TLS proxy"
-	conn.SetDeadline(time.Now().Add(testTimeout))
+	_ = conn.SetDeadline(time.Now().Add(testTimeout))
 	if _, err := conn.Write([]byte(testData)); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}

@@ -69,7 +69,7 @@ func TestMetrics_HTTPEndpoint(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	srv := &http.Server{Handler: mux}
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { srv.Close() })
 
 	// Wait for server to be ready

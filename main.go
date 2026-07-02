@@ -177,6 +177,19 @@ func main() {
 	rootCtx, rootCancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer rootCancel()
 
+	// Optionally watch cert/key files and reload automatically on change.
+	// This complements the SIGHUP handler and is recommended for containerized
+	// deployments with mounted secrets. Config asked for it, so treat a failure
+	// to establish the watcher as fatal (fail-closed like the rest of startup).
+	if certStore != nil && k.Bool("server.tls.autoreload") {
+		if err := certStore.Watch(rootCtx); err != nil {
+			slog.Error("Failed to start certificate auto-reload watcher", "error", err)
+			listener.Close()
+			os.Exit(1)
+		}
+		slog.Info("Certificate auto-reload enabled (watching cert files)")
+	}
+
 	switch k.String("server.type") {
 	case "tcp":
 		// Pull remote.addr out of Config and convert to *net.TCPAddr

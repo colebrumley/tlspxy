@@ -61,6 +61,16 @@ func TestGetConfig(t *testing.T) {
 	}
 }
 
+func TestDefault_AutoreloadFalse(t *testing.T) {
+	k := koanf.New(".")
+	if err := k.Load(confmap.Provider(DefaultConfig, "."), nil); err != nil {
+		t.Fatalf("loading defaults: %v", err)
+	}
+	if k.Bool("server.tls.autoreload") {
+		t.Error("server.tls.autoreload default should be false")
+	}
+}
+
 func TestGetConfig_NoFiles(t *testing.T) {
 	origDir, err := os.Getwd()
 	if err != nil {

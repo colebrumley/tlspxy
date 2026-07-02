@@ -47,7 +47,7 @@ Built on **koanf**. Precedence, lowest to highest: built-in defaults → YAML fi
 ### TLS (`internal/tls`)
 
 - `ConfigServer` wraps the inner TCP listener with a TLS listener and returns an optional `certStore`.
-- `certstore.go` holds the default + SNI certs and powers hot-reload: on **SIGHUP** `ReloadAll()` re-reads cert files from disk; existing connections keep the old cert, new ones use the reloaded cert, and a failed reload preserves the previous cert. Hot-reload is unavailable under Let's Encrypt (it manages its own lifecycle).
+- `certstore.go` holds the default + SNI certs and powers hot-reload: on **SIGHUP** `ReloadAll()` re-reads cert files from disk; existing connections keep the old cert, new ones use the reloaded cert, and a failed reload preserves the previous cert. `watcher.go` adds opt-in automatic reload (`server.tls.autoreload`) via an fsnotify watcher on the cert/key parent directories (watches dirs, not files, so k8s/certbot atomic rename/symlink swaps are caught; events are filtered to the watched filenames + any Create in a watched dir, then debounced ~500ms before calling `ReloadAll`). Hot-reload (both SIGHUP and autoreload) is unavailable under Let's Encrypt (it manages its own lifecycle).
 - `ConfigRemote` builds the backend-side `*tls.Config` (custom CA, mTLS client cert, version/cipher/ALPN). `versions.go` maps version/cipher-suite strings to `crypto/tls` constants.
 
 ### Signals (`internal/signal`)

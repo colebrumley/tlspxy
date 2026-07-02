@@ -18,6 +18,7 @@ var DefaultConfig = map[string]interface{}{
 		"tls": map[string]interface{}{
 			"verify":       false,
 			"require":      false,
+			"autoreload":   false,
 			"cert":         "",
 			"key":          "",
 			"ca":           "",

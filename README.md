@@ -96,6 +96,7 @@ server:
     ca: ""                   # Path to CA cert for client verification
     require: false           # Require client certificates
     verify: false            # Require AND verify client certificates (overrides require)
+    autoreload: false        # Watch cert/key files and reload automatically on change
     minversion: ""           # Minimum TLS version: 1.0, 1.1, 1.2, 1.3 (default: 1.2)
     maxversion: ""           # Maximum TLS version (default: Go default, currently 1.3)
     ciphersuites: ""         # Comma-separated cipher suite names (default: Go defaults)
@@ -151,6 +152,7 @@ All environment variables use the `TLSPXY_` prefix to avoid collisions with stan
 | `server.http2` | `TLSPXY_SERVER_HTTP2` |
 | `server.trustxff` | `TLSPXY_SERVER_TRUSTXFF` |
 | `server.tls.minversion` | `TLSPXY_SERVER_TLS_MINVERSION` |
+| `server.tls.autoreload` | `TLSPXY_SERVER_TLS_AUTORELOAD` |
 | `remote.addr` | `TLSPXY_REMOTE_ADDR` |
 | `remote.proxyprotocol` | `TLSPXY_REMOTE_PROXYPROTOCOL` |
 | `remote.timeouts.dial` | `TLSPXY_REMOTE_TIMEOUTS_DIAL` |
@@ -226,6 +228,20 @@ kill -HUP $(pidof tlspxy)
 ```
 
 On SIGHUP, tlspxy reloads the default certificate and all SNI certificates from disk. Existing connections continue using the old certificate; new connections use the reloaded one. If a certificate fails to load, the old certificate is preserved and an error is logged.
+
+#### Automatic reload (filesystem watching)
+
+Set `server.tls.autoreload: true` to also reload certificates automatically whenever the cert or key files change on disk, without sending a signal:
+
+```yaml
+server:
+  tls:
+    autoreload: true       # watch cert/key files and reload on change
+```
+
+tlspxy watches the *directories* containing the certificate and key files (using [fsnotify](https://github.com/fsnotify/fsnotify)) rather than the files themselves. This is important for Kubernetes mounted secrets and certbot-style rotation, where the file is replaced via an atomic rename/symlink swap that would otherwise leave a file-level watch pointing at a stale inode. Bursts of events (cert and key written back-to-back) are debounced (~500ms) into a single reload. Reloads use the same fail-safe semantics as SIGHUP: a bad certificate on disk is ignored and the previous certificate is kept.
+
+SIGHUP still works regardless of this setting; autoreload is opt-in and recommended for containerized deployments with mounted secrets. Like SIGHUP, it is unavailable under Let's Encrypt (which manages its own certificate lifecycle).
 
 ### SNI-Based Certificate Selection
 

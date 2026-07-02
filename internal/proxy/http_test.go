@@ -116,7 +116,12 @@ func TestRoundTrip_CountsBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RoundTrip() error = %v", err)
 	}
-	defer resp.Body.Close()
+
+	// Bytes are counted as the body streams through, on Close.
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
+	resp.Body.Close()
 
 	bytesTo := atomic.LoadInt64(&transport.bytesTo)
 	bytesFrom := atomic.LoadInt64(&transport.bytesFrom)
@@ -299,18 +304,62 @@ func TestRoundTrip_ShowContentTrue_ResponseReadable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RoundTrip() error = %v", err)
 	}
-	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("reading response body: %v", err)
 	}
+	resp.Body.Close()
 	if string(body) != responseBody {
 		t.Errorf("response body = %q, want %q", string(body), responseBody)
 	}
 
 	if got := atomic.LoadInt64(&transport.bytesFrom); got != int64(len(responseBody)) {
 		t.Errorf("bytesFrom = %d, want %d", got, len(responseBody))
+	}
+}
+
+// TestRoundTrip_ShowContentLargeBody verifies that with ShowContent enabled a
+// response larger than maxLoggedBytes is still forwarded to the client in FULL
+// (streaming, not just the logged prefix), and byte accounting counts the whole
+// body rather than only the bounded prefix.
+func TestRoundTrip_ShowContentLargeBody(t *testing.T) {
+	largeBody := strings.Repeat("z", maxLoggedBytes*3+123)
+
+	mock := &mockRoundTripper{
+		response: &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/octet-stream"}},
+			Body:       io.NopCloser(strings.NewReader(largeBody)),
+		},
+	}
+
+	transport := &Transport{
+		ShowContent:  true,
+		RoundTripper: mock,
+	}
+
+	req, _ := http.NewRequest("GET", "http://example.com/large", nil)
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip() error = %v", err)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
+	resp.Body.Close()
+
+	if len(body) != len(largeBody) {
+		t.Fatalf("client received %d bytes, want full body of %d", len(body), len(largeBody))
+	}
+	if string(body) != largeBody {
+		t.Error("client did not receive the full body content unchanged")
+	}
+
+	if got := atomic.LoadInt64(&transport.bytesFrom); got != int64(len(largeBody)) {
+		t.Errorf("bytesFrom = %d, want full body %d", got, len(largeBody))
 	}
 }
 
@@ -377,7 +426,7 @@ func TestRoundTrip_Concurrent(t *testing.T) {
 }
 
 // makeDirector creates a director function matching main.go's logic for testing.
-func makeDirector(target *url.URL) func(*http.Request) {
+func makeDirector(target *url.URL, trustXFF bool) func(*http.Request) {
 	return func(req *http.Request) {
 		req.Host = target.Host
 		req.URL.Scheme = target.Scheme
@@ -385,8 +434,10 @@ func makeDirector(target *url.URL) func(*http.Request) {
 		req.URL.Path = SingleJoiningSlash(target.Path, req.URL.Path)
 		if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
 			req.Header.Set("X-Real-IP", clientIP)
-			if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
-				clientIP = prior + ", " + clientIP
+			if trustXFF {
+				if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
+					clientIP = prior + ", " + clientIP
+				}
 			}
 			req.Header.Set("X-Forwarded-For", clientIP)
 		}
@@ -404,7 +455,7 @@ func makeDirector(target *url.URL) func(*http.Request) {
 func TestHTTPDirector_XForwardedFor(t *testing.T) {
 	target, _ := url.Parse("http://backend.local:9090/base")
 
-	director := makeDirector(target)
+	director := makeDirector(target, false)
 
 	t.Run("sets X-Forwarded-For and X-Real-IP", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", "http://proxy.local/hello", nil)
@@ -419,18 +470,31 @@ func TestHTTPDirector_XForwardedFor(t *testing.T) {
 		}
 	})
 
-	t.Run("appends to existing X-Forwarded-For", func(t *testing.T) {
+	t.Run("resets existing X-Forwarded-For by default", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", "http://proxy.local/hello", nil)
 		req.RemoteAddr = "10.0.0.2:54321"
 		req.Header.Set("X-Forwarded-For", "203.0.113.50")
 		director(req)
 
-		want := "203.0.113.50, 10.0.0.2"
+		want := "10.0.0.2"
 		if got := req.Header.Get("X-Forwarded-For"); got != want {
 			t.Errorf("X-Forwarded-For = %q, want %q", got, want)
 		}
 		if got := req.Header.Get("X-Real-IP"); got != "10.0.0.2" {
 			t.Errorf("X-Real-IP = %q, want %q", got, "10.0.0.2")
+		}
+	})
+
+	t.Run("appends to existing X-Forwarded-For when trusted", func(t *testing.T) {
+		d := makeDirector(target, true)
+		req, _ := http.NewRequest("GET", "http://proxy.local/hello", nil)
+		req.RemoteAddr = "10.0.0.2:54321"
+		req.Header.Set("X-Forwarded-For", "203.0.113.50")
+		d(req)
+
+		want := "203.0.113.50, 10.0.0.2"
+		if got := req.Header.Get("X-Forwarded-For"); got != want {
+			t.Errorf("X-Forwarded-For = %q, want %q", got, want)
 		}
 	})
 
@@ -464,7 +528,7 @@ func TestHTTPDirector_XForwardedFor(t *testing.T) {
 
 	t.Run("query string merging", func(t *testing.T) {
 		targetWithQuery, _ := url.Parse("http://backend.local:9090/base?key=val")
-		d := makeDirector(targetWithQuery)
+		d := makeDirector(targetWithQuery, false)
 
 		req, _ := http.NewRequest("GET", "http://proxy.local/path?foo=bar", nil)
 		req.RemoteAddr = "127.0.0.1:1234"
@@ -511,7 +575,7 @@ func TestHTTPReverseProxy_EndToEnd(t *testing.T) {
 	}
 
 	rp := &httputil.ReverseProxy{
-		Director:  makeDirector(backendURL),
+		Director:  makeDirector(backendURL, false),
 		Transport: proxy,
 	}
 

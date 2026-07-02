@@ -16,19 +16,19 @@ import (
 
 // ConfigServer wraps the inner listener with TLS if configured.
 // Returns the (possibly wrapped) listener and a CertStore if cert-based
-// TLS is configured (nil for Let's Encrypt or no TLS).
-func ConfigServer(inner net.Listener, k *koanf.Koanf) (net.Listener, *CertStore) {
+// TLS is configured (nil for Let's Encrypt or no TLS). A TLS configuration
+// that was requested but fails to load is returned as an error rather than
+// silently falling back to a plaintext listener.
+func ConfigServer(inner net.Listener, k *koanf.Koanf) (net.Listener, *CertStore, error) {
 	tlsConf, store, err := GetServerConfig(k)
 	if err != nil {
-		slog.Error(fmt.Sprintf("Failed to load server TLS config: %s", err.Error()))
-		slog.Info("Proceeding with non-TLS server")
-		return inner, nil
+		return nil, nil, fmt.Errorf("failed to load server TLS config: %w", err)
 	}
 
 	if tlsConf != nil {
-		return cryptotls.NewListener(inner, tlsConf), store
+		return cryptotls.NewListener(inner, tlsConf), store, nil
 	}
-	return inner, nil
+	return inner, nil, nil
 }
 
 // GetServerConfig reads server TLS configuration from koanf and returns a *tls.Config

@@ -8,6 +8,7 @@ var DefaultConfig = map[string]interface{}{
 		"healthcheck": "",
 		"maxconns":    0, // 0 means unlimited
 		"http2":       false,
+		"trustxff":    false,
 		"timeouts": map[string]interface{}{
 			"read":  "0s",
 			"write": "0s",

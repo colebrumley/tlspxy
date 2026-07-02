@@ -29,8 +29,8 @@ func TestGetConfig(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Write a valid YAML config file (no #tlspxy header required)
-	cfgContent := "remote:\n  addr: example.com:443\n"
+	// Auto-discovered YAML in the working dir must start with the #tlspxy marker.
+	cfgContent := "#tlspxy\nremote:\n  addr: example.com:443\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, "test.yml"), []byte(cfgContent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -177,6 +177,99 @@ func TestGetConfig_ExtraPaths(t *testing.T) {
 	}
 	if addr := gotK2.String("remote.addr"); addr != "extra-host:9999" {
 		t.Errorf("remote.addr = %q, want %q", addr, "extra-host:9999")
+	}
+}
+
+func TestGetConfig_MarkerRequiredForAutoDiscovery(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	tmpDir, err := os.MkdirTemp("", "tlspxy-config-marker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Unmarked YAML: looks like a stray docker-compose.yml — must be IGNORED.
+	unmarked := "remote:\n  addr: stray-host:1111\nserver:\n  type: http\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "docker-compose.yml"), []byte(unmarked), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Marked YAML: real config — must be LOADED.
+	marked := "#tlspxy\nremote:\n  addr: real-host:2222\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "tlspxy.yml"), []byte(marked), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	gotK, err := GetConfig()
+	if err != nil {
+		t.Fatalf("GetConfig() returned error: %v", err)
+	}
+
+	// The marked file wins; the unmarked stray file must not have been applied.
+	if addr := gotK.String("remote.addr"); addr != "real-host:2222" {
+		t.Errorf("remote.addr = %q, want %q (unmarked file should be ignored)", addr, "real-host:2222")
+	}
+	// server.type from the stray file must NOT have leaked in (default is tcp).
+	if typ := gotK.String("server.type"); typ != "tcp" {
+		t.Errorf("server.type = %q, want %q (unmarked file should be ignored)", typ, "tcp")
+	}
+}
+
+func TestGetConfig_ExplicitFileNoMarkerRequired(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// Empty working dir so auto-discovery loads nothing.
+	emptyDir, err := os.MkdirTemp("", "tlspxy-config-empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(emptyDir)
+
+	extraDir, err := os.MkdirTemp("", "tlspxy-config-explicit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(extraDir)
+
+	// Unmarked file passed explicitly via -config must still load.
+	unmarked := "remote:\n  addr: explicit-host:3333\n"
+	cfgPath := filepath.Join(extraDir, "myconfig.yml")
+	if err := os.WriteFile(cfgPath, []byte(unmarked), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chdir(emptyDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Explicit file path.
+	gotK, err := GetConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("GetConfig(file) returned error: %v", err)
+	}
+	if addr := gotK.String("remote.addr"); addr != "explicit-host:3333" {
+		t.Errorf("remote.addr = %q, want %q (explicit unmarked file should load)", addr, "explicit-host:3333")
+	}
+
+	// Explicit directory path must also load unmarked files.
+	gotK2, err := GetConfig(extraDir)
+	if err != nil {
+		t.Fatalf("GetConfig(dir) returned error: %v", err)
+	}
+	if addr := gotK2.String("remote.addr"); addr != "explicit-host:3333" {
+		t.Errorf("remote.addr = %q, want %q (explicit unmarked dir should load)", addr, "explicit-host:3333")
 	}
 }
 
@@ -364,10 +457,26 @@ func TestValidateConfig(t *testing.T) {
 			wantErr: "",
 		},
 		{
-			name: "valid https config",
+			name: "https config requires server TLS",
 			overrides: map[string]interface{}{
 				"server": map[string]interface{}{
 					"type": "https",
+				},
+				"remote": map[string]interface{}{
+					"addr": "https://example.com",
+				},
+			},
+			wantErr: "server.type https",
+		},
+		{
+			name: "valid https config with server certs",
+			overrides: map[string]interface{}{
+				"server": map[string]interface{}{
+					"type": "https",
+					"tls": map[string]interface{}{
+						"cert": "/path/to/cert.pem",
+						"key":  "/path/to/key.pem",
+					},
 				},
 				"remote": map[string]interface{}{
 					"addr": "https://example.com",
@@ -483,12 +592,52 @@ func TestValidateConfig(t *testing.T) {
 			overrides: map[string]interface{}{
 				"server": map[string]interface{}{
 					"type": "https",
+					"tls": map[string]interface{}{
+						"cert": "/path/to/cert.pem",
+						"key":  "/path/to/key.pem",
+					},
 				},
 				"remote": map[string]interface{}{
 					"addr": "example.com",
 				},
 			},
 			wantErr: "remote.addr",
+		},
+		{
+			name: "remote cert without key",
+			overrides: map[string]interface{}{
+				"remote": map[string]interface{}{
+					"tls": map[string]interface{}{
+						"cert": "/path/to/cert.pem",
+						"key":  "",
+					},
+				},
+			},
+			wantErr: "remote.tls.key",
+		},
+		{
+			name: "remote key without cert",
+			overrides: map[string]interface{}{
+				"remote": map[string]interface{}{
+					"tls": map[string]interface{}{
+						"cert": "",
+						"key":  "/path/to/key.pem",
+					},
+				},
+			},
+			wantErr: "remote.tls.cert",
+		},
+		{
+			name: "remote TLS material requires TLS enabled",
+			overrides: map[string]interface{}{
+				"remote": map[string]interface{}{
+					"tls": map[string]interface{}{
+						"enable": false,
+						"ca":     "/path/to/ca.pem",
+					},
+				},
+			},
+			wantErr: "remote.tls.enable",
 		},
 		{
 			name: "valid timeout durations",

@@ -42,6 +42,11 @@ func (c *countingReadCloser) Close() error {
 
 var httpLog = slog.With("component", "http")
 
+// maxLoggedBytes caps how much of a response body is buffered for content
+// logging. The body itself is still streamed to the client in full; only this
+// bounded prefix is read into memory for the debug log (mirrors the TCP path).
+const maxLoggedBytes = 64 * 1024
+
 // InterruptHandler writes info when an os signal is encountered.
 func (t *Transport) InterruptHandler() {
 	httpLog.Info("Proxy shutting down",
@@ -77,27 +82,38 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 	}
 
 	if t.ShowContent {
-		b, err := io.ReadAll(resp.Body)
-		if err != nil {
-			resp = nil
-			return resp, err
-		}
-		err = resp.Body.Close()
-		if err != nil {
-			resp = nil
-			return resp, err
-		}
+		// Read only a bounded prefix for logging; the full body is still
+		// streamed to the client below. Ignore read errors here — they will
+		// resurface to the client when it reads the reconstructed body.
+		prefix, _ := io.ReadAll(io.LimitReader(resp.Body, maxLoggedBytes))
+		truncated := len(prefix) == maxLoggedBytes
 		entry.Debug("Response received",
 			"status", resp.StatusCode,
 			"content_type", resp.Header.Get("Content-Type"),
-			"bytes", len(b),
+			"bytes", len(prefix),
+			"truncated", truncated,
 		)
-		entry.Debug(fmt.Sprintf("Content: %s", string(b)))
-		atomic.AddInt64(&t.bytesFrom, int64(len(b)))
-		if metrics.Enabled.Load() {
-			metrics.BytesReceivedTotal.Add(float64(len(b)))
+		entry.Debug(fmt.Sprintf("Content: %s", string(prefix)))
+
+		// Reconstruct the body: the already-read prefix concatenated with the
+		// remaining unread body, wrapped so total bytes are still counted and
+		// the original body is closed exactly once via the embedded Closer.
+		original := resp.Body
+		resp.Body = &countingReadCloser{
+			ReadCloser: struct {
+				io.Reader
+				io.Closer
+			}{
+				Reader: io.MultiReader(bytes.NewReader(prefix), original),
+				Closer: original,
+			},
+			onClose: func(n int64) {
+				atomic.AddInt64(&t.bytesFrom, n)
+				if metrics.Enabled.Load() {
+					metrics.BytesReceivedTotal.Add(float64(n))
+				}
+			},
 		}
-		resp.Body = io.NopCloser(bytes.NewReader(b))
 	} else {
 		entry.Debug("Response received",
 			"status", resp.StatusCode,

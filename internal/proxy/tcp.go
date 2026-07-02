@@ -53,6 +53,7 @@ type TCPProxy struct {
 	RemoteTLSConf          *tls.Config
 	ErrorSignal            chan bool
 	Ctx                    context.Context
+	connCtx                context.Context
 	CloseOnce              sync.Once
 	ConnID                 int
 	ShowContent            bool
@@ -63,7 +64,11 @@ type TCPProxy struct {
 }
 
 func (p *TCPProxy) err(s string, err error) {
-	if err != io.EOF {
+	// io.EOF and net.ErrClosed are benign: EOF is a normal peer close, and
+	// ErrClosed is what the surviving pipe goroutine sees once the connection
+	// is torn down locally during teardown. Neither should be logged or
+	// counted as a real error.
+	if err != io.EOF && !errors.Is(err, net.ErrClosed) {
 		p.Log.Warn(s, "error", err)
 		if metrics.Enabled.Load() {
 			metrics.ErrorsTotal.WithLabelValues("connection").Inc()
@@ -95,6 +100,7 @@ func (p *TCPProxy) Start() {
 	// Create a per-connection context so the watcher goroutine is always
 	// cleaned up when Start() returns, even for normal connection closure.
 	connCtx, connCancel := context.WithCancel(p.Ctx)
+	p.connCtx = connCtx
 	defer connCancel()
 
 	var (
@@ -182,10 +188,19 @@ func (p *TCPProxy) Pipe(src, dst net.Conn) {
 		direction = "send"
 	}
 
+	// Consult the per-connection context so that a local teardown (connCancel
+	// fired when Start() returns) makes the surviving pipe goroutine exit
+	// quietly instead of misclassifying net.ErrClosed as a real error. Fall
+	// back to the root context if Pipe is invoked without Start().
+	ctx := p.connCtx
+	if ctx == nil {
+		ctx = p.Ctx
+	}
+
 	buff := make([]byte, 0xffff)
 	for {
 		// Check for context cancellation before each read.
-		if p.Ctx != nil && p.Ctx.Err() != nil {
+		if ctx != nil && ctx.Err() != nil {
 			return
 		}
 
@@ -201,7 +216,7 @@ func (p *TCPProxy) Pipe(src, dst net.Conn) {
 		if err != nil {
 			// If the context was cancelled, the read error is expected
 			// from the connection being closed. Don't log it as an error.
-			if p.Ctx != nil && p.Ctx.Err() != nil {
+			if ctx != nil && ctx.Err() != nil {
 				return
 			}
 			// Handle timeout errors gracefully at Info level.
@@ -227,30 +242,38 @@ func (p *TCPProxy) Pipe(src, dst net.Conn) {
 			dst.SetWriteDeadline(time.Now().Add(p.WriteTimeout))
 		}
 
-		n, err = dst.Write(b)
-		if err != nil {
-			if p.Ctx != nil && p.Ctx.Err() != nil {
+		written := 0
+		for written < len(b) {
+			n, err = dst.Write(b[written:])
+			written += n
+			if n == 0 && err == nil {
+				p.err("Write failed", io.ErrNoProgress)
 				return
 			}
-			// Handle timeout errors gracefully at Info level.
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
-				p.Log.Info("Connection timed out", "direction", direction, "side", "write")
-				p.CloseOnce.Do(func() { p.ErrorSignal <- true })
+			if err != nil {
+				if ctx != nil && ctx.Err() != nil {
+					return
+				}
+				// Handle timeout errors gracefully at Info level.
+				var netErr net.Error
+				if errors.As(err, &netErr) && netErr.Timeout() {
+					p.Log.Info("Connection timed out", "direction", direction, "side", "write")
+					p.CloseOnce.Do(func() { p.ErrorSignal <- true })
+					return
+				}
+				p.err("Write failed", err)
 				return
 			}
-			p.err("Write failed", err)
-			return
 		}
 		if islocal {
-			p.Counter.To(uint64(n))
+			p.Counter.To(uint64(written))
 			if metrics.Enabled.Load() {
-				metrics.BytesSentTotal.Add(float64(n))
+				metrics.BytesSentTotal.Add(float64(written))
 			}
 		} else {
-			p.Counter.From(uint64(n))
+			p.Counter.From(uint64(written))
 			if metrics.Enabled.Load() {
-				metrics.BytesReceivedTotal.Add(float64(n))
+				metrics.BytesReceivedTotal.Add(float64(written))
 			}
 		}
 	}

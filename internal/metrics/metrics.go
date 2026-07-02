@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -58,14 +59,25 @@ func Init() {
 	})
 }
 
-// StartServer starts the metrics HTTP server in a background goroutine.
-func StartServer(addr, path string) {
+// StartServer starts the metrics HTTP server. It binds the listener
+// synchronously so bind failures (e.g. port already in use) are reported to
+// the caller immediately, then serves in a background goroutine. The returned
+// *http.Server can be used to perform a graceful shutdown.
+func StartServer(addr, path string) (*http.Server, error) {
 	mux := http.NewServeMux()
 	mux.Handle(path, promhttp.Handler())
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	srv := &http.Server{Handler: mux}
 	go func() {
 		slog.Info("Starting metrics server", "addr", addr, "path", path)
-		if err := http.ListenAndServe(addr, mux); err != nil {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			slog.Error("Metrics server error", "error", err)
 		}
 	}()
+	return srv, nil
 }

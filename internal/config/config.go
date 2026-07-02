@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -33,6 +34,7 @@ var flagDesc = map[string]string{
 	"server-type":                     "Proxy mode: tcp, http, or https",
 	"server-healthcheck":              "Health check path (HTTP mode only, e.g. /healthz)",
 	"server-maxconns":                 "Max concurrent connections (0 = unlimited)",
+	"server-trustxff":                 "Trust and append inbound X-Forwarded-For (only enable behind a trusted upstream proxy)",
 	"server-timeouts-read":            "Read timeout per connection (e.g. 30s, 5m)",
 	"server-timeouts-write":           "Write timeout per connection (e.g. 30s, 5m)",
 	"server-timeouts-idle":            "Idle timeout before closing connection (e.g. 5m, 1h)",
@@ -51,17 +53,17 @@ var flagDesc = map[string]string{
 	"server-http2":                    "Enable HTTP/2 support (http/https modes only)",
 
 	// Remote
-	"remote-addr":            "Backend address (host:port for TCP, URL for HTTP)",
-	"remote-tls-enable":      "Use TLS when connecting to the backend",
-	"remote-tls-verify":      "Verify backend TLS certificate",
-	"remote-tls-cert":        "Client certificate for backend mTLS",
-	"remote-tls-key":         "Client key for backend mTLS",
-	"remote-tls-ca":          "Custom CA cert for backend verification",
-	"remote-tls-sysroots":    "Include system CA roots for backend",
-	"remote-tls-minversion":  "Minimum TLS version for backend",
-	"remote-tls-maxversion":  "Maximum TLS version for backend",
+	"remote-addr":             "Backend address (host:port for TCP, URL for HTTP)",
+	"remote-tls-enable":       "Use TLS when connecting to the backend",
+	"remote-tls-verify":       "Verify backend TLS certificate",
+	"remote-tls-cert":         "Client certificate for backend mTLS",
+	"remote-tls-key":          "Client key for backend mTLS",
+	"remote-tls-ca":           "Custom CA cert for backend verification",
+	"remote-tls-sysroots":     "Include system CA roots for backend",
+	"remote-tls-minversion":   "Minimum TLS version for backend",
+	"remote-tls-maxversion":   "Maximum TLS version for backend",
 	"remote-tls-ciphersuites": "Comma-separated cipher suites for backend",
-	"remote-tls-alpn":        "Comma-separated ALPN protocols for backend",
+	"remote-tls-alpn":         "Comma-separated ALPN protocols for backend",
 
 	// Log
 	"log-level":       "Log level: debug, info, warn, error",
@@ -97,6 +99,7 @@ func helpGroups() []flagGroup {
 				"server-type",
 				"server-healthcheck",
 				"server-maxconns",
+				"server-trustxff",
 				"server-http2",
 				"server-timeouts-read",
 				"server-timeouts-write",
@@ -186,7 +189,7 @@ func GetConfig(extraPaths ...string) (*koanf.Koanf, error) {
 
 	// Load config files from the current working directory
 	dirname, _ := os.Getwd()
-	if err := loadConfigsFromDir(k, dirname); err != nil {
+	if err := loadConfigsFromDir(k, dirname, true); err != nil {
 		slog.Warn("Failed to read config from working directory", "error", err)
 	}
 
@@ -197,7 +200,7 @@ func GetConfig(extraPaths ...string) (*koanf.Koanf, error) {
 			return nil, fmt.Errorf("config path %q: %w", p, statErr)
 		}
 		if info.IsDir() {
-			if dirErr := loadConfigsFromDir(k, p); dirErr != nil {
+			if dirErr := loadConfigsFromDir(k, p, false); dirErr != nil {
 				return nil, fmt.Errorf("config dir %q: %w", p, dirErr)
 			}
 		} else {
@@ -211,7 +214,12 @@ func GetConfig(extraPaths ...string) (*koanf.Koanf, error) {
 }
 
 // loadConfigsFromDir loads all YAML files (.yml, .yaml) from a directory into k.
-func loadConfigsFromDir(k *koanf.Koanf, dirname string) error {
+// When requireMarker is true (auto-discovery from the working directory), files
+// whose first line does not start with the "#tlspxy" marker are skipped, so
+// stray YAML (e.g. docker-compose.yml) cannot silently override proxy config.
+// When false (a directory passed explicitly via -config), the marker is not
+// required and all YAML files are loaded.
+func loadConfigsFromDir(k *koanf.Koanf, dirname string, requireMarker bool) error {
 	files, err := os.ReadDir(dirname)
 	if err != nil {
 		return err
@@ -226,11 +234,26 @@ func loadConfigsFromDir(k *koanf.Koanf, dirname string) error {
 			continue
 		}
 		path := filepath.Join(dirname, name)
+		if requireMarker && !hasMarker(path) {
+			continue
+		}
 		if err := loadConfigFile(k, path); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// hasMarker reports whether the file at path begins with the "#tlspxy" marker
+// on its first line.
+func hasMarker(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	line, _ := bufio.NewReader(f).ReadString('\n')
+	return strings.HasPrefix(strings.TrimSpace(line), "#tlspxy")
 }
 
 // loadConfigFile loads a single YAML config file into k.
@@ -421,6 +444,23 @@ func ValidateConfig(k *koanf.Koanf) error {
 		if domain == "" {
 			return fmt.Errorf("server.tls.letsencrypt.domain is required when Let's Encrypt is enabled\n  set via: -server-tls-letsencrypt-domain or TLSPXY_SERVER_TLS_LETSENCRYPT_DOMAIN")
 		}
+	}
+	if serverType == "https" && tlsCert == "" && !k.Bool("server.tls.letsencrypt.enable") {
+		return fmt.Errorf("server.type https requires server TLS configuration\n  set server.tls.cert/key or enable server.tls.letsencrypt")
+	}
+
+	remoteTLSEnabled := k.Bool("remote.tls.enable")
+	remoteTLSCert := k.String("remote.tls.cert")
+	remoteTLSKey := k.String("remote.tls.key")
+	remoteTLSCA := k.String("remote.tls.ca")
+	if remoteTLSCert != "" && remoteTLSKey == "" {
+		return fmt.Errorf("remote.tls.key is required when remote.tls.cert is set\n  set via: -remote-tls-key or TLSPXY_REMOTE_TLS_KEY")
+	}
+	if remoteTLSKey != "" && remoteTLSCert == "" {
+		return fmt.Errorf("remote.tls.cert is required when remote.tls.key is set\n  set via: -remote-tls-cert or TLSPXY_REMOTE_TLS_CERT")
+	}
+	if !remoteTLSEnabled && (remoteTLSCert != "" || remoteTLSKey != "" || remoteTLSCA != "") {
+		return fmt.Errorf("remote.tls.enable must be true when remote TLS cert, key, or CA is configured")
 	}
 
 	// 6. For http/https server types, remote.addr must be a valid URL

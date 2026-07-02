@@ -167,7 +167,10 @@ func TestConfigServer_WrapsListener(t *testing.T) {
 		t.Fatalf("net.Listen error: %v", err)
 	}
 	defer inner.Close()
-	wrapped, store := ConfigServer(inner, k)
+	wrapped, store, err := ConfigServer(inner, k)
+	if err != nil {
+		t.Fatalf("ConfigServer() error = %v", err)
+	}
 	if wrapped == inner {
 		t.Error("expected ConfigServer to wrap the listener when TLS is configured")
 	}
@@ -188,7 +191,10 @@ func TestConfigServer_NoTLS(t *testing.T) {
 		t.Fatalf("net.Listen error: %v", err)
 	}
 	defer inner.Close()
-	result, store := ConfigServer(inner, k)
+	result, store, err := ConfigServer(inner, k)
+	if err != nil {
+		t.Fatalf("ConfigServer() error = %v", err)
+	}
 	if result != inner {
 		t.Error("expected ConfigServer to return the original listener when no TLS configured")
 	}

@@ -84,6 +84,7 @@ server:
   healthcheck: ""            # Health check path (HTTP mode only, e.g. "/healthz")
   maxconns: 0                # Max concurrent connections (0 = unlimited)
   http2: false               # Enable HTTP/2 (http/https modes only)
+  trustxff: false            # Append to inbound X-Forwarded-For (only enable behind a trusted upstream proxy)
   timeouts:
     read: "0s"               # Read timeout per connection (e.g. 30s, 5m)
     write: "0s"              # Write timeout per connection
@@ -133,6 +134,8 @@ metrics:
   path: "/metrics"           # Metrics endpoint path
 ```
 
+`server.maxconns` limits accepted TCP connections. In HTTP/2 mode, multiple concurrent streams can share one accepted connection; use backend/request-level limits if you need per-request concurrency control.
+
 ### Environment Variables
 
 All environment variables use the `TLSPXY_` prefix to avoid collisions with standard variables (e.g., `REMOTE_ADDR`, `PATH`). The prefix is stripped, then dots are replaced by underscores, all uppercase:
@@ -142,6 +145,7 @@ All environment variables use the `TLSPXY_` prefix to avoid collisions with stan
 | `server.addr` | `TLSPXY_SERVER_ADDR` |
 | `server.type` | `TLSPXY_SERVER_TYPE` |
 | `server.http2` | `TLSPXY_SERVER_HTTP2` |
+| `server.trustxff` | `TLSPXY_SERVER_TRUSTXFF` |
 | `server.tls.minversion` | `TLSPXY_SERVER_TLS_MINVERSION` |
 | `remote.addr` | `TLSPXY_REMOTE_ADDR` |
 | `remote.tls.enable` | `TLSPXY_REMOTE_TLS_ENABLE` |
@@ -184,7 +188,7 @@ server:
     key: "/path/to/server.key"
 ```
 
-Both `cert` and `key` must be provided together. If neither is set (and Let's Encrypt is disabled), the server runs without TLS.
+Both `cert` and `key` must be provided together. If neither is set (and Let's Encrypt is disabled), the server runs without TLS. If a TLS configuration is requested but fails to load (missing or invalid cert/key/CA), startup fails rather than silently falling back to a plaintext listener.
 
 ### TLS Version and Cipher Suites
 
@@ -280,6 +284,10 @@ server:
 ```
 
 When `http2: true` is set, both the server and the upstream transport are configured for HTTP/2. This requires `server.type` to be `http` or `https` (not `tcp`). Set `server.tls.alpn` to advertise HTTP/2 support to clients.
+
+## Forwarded Headers (HTTP/HTTPS)
+
+In `http`/`https` mode the proxy always sets `X-Real-IP` to the real client peer address. By default it treats itself as the trust boundary and **replaces** `X-Forwarded-For` with the real peer, discarding any client-supplied value (which is otherwise spoofable). Set `server.trustxff: true` only when tlspxy sits behind another trusted proxy that sets `X-Forwarded-For`; in that case the real peer is appended to the inbound header instead.
 
 ## Remote/Backend TLS
 
@@ -377,7 +385,7 @@ server:
   healthcheck: "/healthz"
 ```
 
-Requests to that path return `200 OK` with `{"status":"ok"}`. All other requests are proxied normally.
+Requests to that path return `200 OK` with `{"status":"ok"}`. This is a proxy liveness check and does not probe the backend. All other requests are proxied normally.
 
 ## Logging
 

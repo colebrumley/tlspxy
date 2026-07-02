@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -100,10 +101,19 @@ func main() {
 	// Initialize metrics if enabled
 	if k.Bool("metrics.enable") {
 		metrics.Init()
-		metrics.StartServer(
+		metricsSrv, err := metrics.StartServer(
 			k.String("metrics.addr"),
 			k.String("metrics.path"),
 		)
+		if err != nil {
+			slog.Error("Failed to start metrics server", "addr", k.String("metrics.addr"), "error", err)
+			os.Exit(1)
+		}
+		shm.AddHandler(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			metricsSrv.Shutdown(ctx)
+		}, os.Interrupt, syscall.SIGTERM)
 	}
 
 	// Print the loaded config if debug is on
@@ -129,7 +139,12 @@ func main() {
 	}
 
 	// Configure the server's TLS settings
-	listener, certStore := tlsconfig.ConfigServer(inner, k)
+	listener, certStore, err := tlsconfig.ConfigServer(inner, k)
+	if err != nil {
+		slog.Error("Failed to configure server TLS", "error", err)
+		inner.Close()
+		os.Exit(1)
+	}
 
 	if certStore != nil {
 		shm.AddHandler(func() {
@@ -145,9 +160,14 @@ func main() {
 	// Load the remote config. This will depend on what kind of listener
 	// we have configured.
 	if remoteTLS, err = tlsconfig.ConfigRemote(k); err != nil {
-		slog.Warn(fmt.Sprintf("Skipping client TLS configuration: %v", err))
-		remoteTLS = nil
+		slog.Error("Failed to configure remote TLS", "error", err)
+		listener.Close()
+		os.Exit(1)
 	}
+
+	readTimeout, _ := time.ParseDuration(k.String("server.timeouts.read"))
+	writeTimeout, _ := time.ParseDuration(k.String("server.timeouts.write"))
+	idleTimeout, _ := time.ParseDuration(k.String("server.timeouts.idle"))
 
 	// Create a root context that is cancelled on SIGINT/SIGTERM.
 	rootCtx, rootCancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -165,11 +185,6 @@ func main() {
 		ctr := proxy.Counter{}
 		shm.AddHandler(ctr.InterruptHandler, os.Interrupt, syscall.SIGTERM)
 
-		// Parse timeout configuration.
-		readTimeout, _ := time.ParseDuration(k.String("server.timeouts.read"))
-		writeTimeout, _ := time.ParseDuration(k.String("server.timeouts.write"))
-		idleTimeout, _ := time.ParseDuration(k.String("server.timeouts.idle"))
-
 		// When root context is cancelled, close the listener to break
 		// out of the Accept loop.
 		go func() {
@@ -183,6 +198,7 @@ func main() {
 			slog.Info("Connection limit configured", "maxconns", maxConns)
 		}
 
+		var wg sync.WaitGroup
 		connID := 0
 		for {
 			conn, err := listener.Accept()
@@ -223,7 +239,9 @@ func main() {
 				WriteTimeout:  writeTimeout,
 				IdleTimeout:   idleTimeout,
 			}
+			wg.Add(1)
 			go func() {
+				defer wg.Done()
 				defer func() {
 					if sem != nil {
 						<-sem
@@ -231,6 +249,17 @@ func main() {
 				}()
 				p.Start()
 			}()
+		}
+
+		// Wait for in-flight connection goroutines to finish their cleanup,
+		// bounded by a 30s timeout to avoid hanging indefinitely on shutdown.
+		done := make(chan struct{})
+		go func() { wg.Wait(); close(done) }()
+		select {
+		case <-done:
+			slog.Info("All connections drained")
+		case <-time.After(30 * time.Second):
+			slog.Warn("Drain timeout exceeded, forcing exit")
 		}
 	case "http", "https":
 		var (
@@ -242,6 +271,12 @@ func main() {
 			os.Exit(1)
 		}
 
+		// trustXFF controls whether inbound X-Forwarded-For headers are
+		// trusted. As an edge proxy the default is secure: reset XFF to the
+		// real peer. Enable server.trustxff only when tlspxy sits
+		// behind another trusted proxy.
+		trustXFF := k.Bool("server.trustxff")
+
 		director := func(req *http.Request) {
 			oldURL := req.URL.String()
 			req.Host = u.Host
@@ -250,8 +285,10 @@ func main() {
 			req.URL.Path = proxy.SingleJoiningSlash(u.Path, req.URL.Path)
 			if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
 				req.Header.Set("X-Real-IP", clientIP)
-				if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
-					clientIP = prior + ", " + clientIP
+				if trustXFF {
+					if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
+						clientIP = prior + ", " + clientIP
+					}
 				}
 				req.Header.Set("X-Forwarded-For", clientIP)
 			}
@@ -270,7 +307,11 @@ func main() {
 		pt := &proxy.Transport{
 			ShowContent: k.Bool("log.contents"),
 			RoundTripper: &http.Transport{
-				TLSClientConfig: remoteTLS,
+				DialContext:           (&net.Dialer{Timeout: readTimeout}).DialContext,
+				TLSClientConfig:       remoteTLS,
+				TLSHandshakeTimeout:   readTimeout,
+				ResponseHeaderTimeout: readTimeout,
+				IdleConnTimeout:       idleTimeout,
 			},
 		}
 		shm.AddHandler(pt.InterruptHandler, os.Interrupt, syscall.SIGTERM)
@@ -284,26 +325,39 @@ func main() {
 			handler = health.CheckMiddleware(hcPath, rp)
 		}
 		srv := &http.Server{
-			Handler:     handler,
-			BaseContext: func(_ net.Listener) context.Context { return rootCtx },
+			Handler:      handler,
+			ReadTimeout:  readTimeout,
+			WriteTimeout: writeTimeout,
+			IdleTimeout:  idleTimeout,
+			BaseContext:  func(_ net.Listener) context.Context { return rootCtx },
 		}
 		if maxConns := k.Int("server.maxconns"); maxConns > 0 {
 			sem := make(chan struct{}, maxConns)
 			slog.Info("Connection limit configured", "maxconns", maxConns)
+			// Track which connections actually acquired a semaphore slot so
+			// that rejected connections (closed at StateNew without a slot) do
+			// not release a token belonging to a different live connection.
+			var mu sync.Mutex
+			acquired := make(map[net.Conn]struct{})
 			srv.ConnState = func(conn net.Conn, state http.ConnState) {
 				switch state {
 				case http.StateNew:
 					select {
 					case sem <- struct{}{}:
+						mu.Lock()
+						acquired[conn] = struct{}{}
+						mu.Unlock()
 					default:
 						slog.Warn("Connection limit reached, rejecting", "maxconns", cap(sem))
 						conn.Close()
 					}
 				case http.StateClosed, http.StateHijacked:
-					select {
-					case <-sem:
-					default:
+					mu.Lock()
+					if _, ok := acquired[conn]; ok {
+						delete(acquired, conn)
+						<-sem
 					}
+					mu.Unlock()
 				}
 			}
 		}

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -9,11 +10,31 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// syncBuffer is a goroutine-safe buffer for capturing slog output from the
+// concurrent pipe goroutines.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 func testLog() *slog.Logger {
 	return slog.With("component", "tcp", "conn", 0)
@@ -342,6 +363,87 @@ func TestTCPProxy_Start_HappyPath(t *testing.T) {
 	case <-startDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Timed out waiting for Start() to return")
+	}
+}
+
+// TestTCPProxy_Start_CleanClose_NoErrorLog verifies that a normal connection
+// teardown does not emit spurious "Read failed"/"Write failed" WARN logs. When
+// one peer closes, the surviving pipe goroutine sees net.ErrClosed once the
+// connection is torn down locally; that must be classified as benign rather
+// than logged at WARN (and counted as a connection error).
+func TestTCPProxy_Start_CleanClose_NoErrorLog(t *testing.T) {
+	ln := startEchoServer(t)
+	defer ln.Close()
+
+	clientEnd, serverProxy := net.Pipe()
+
+	logBuf := &syncBuffer{}
+	logger := slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	counter := &Counter{}
+	errSignal := make(chan bool, 1)
+	proxy := &TCPProxy{
+		Counter:     counter,
+		RemoteAddr:  ln.Addr().String(),
+		ServerConn:  serverProxy,
+		ErrorSignal: errSignal,
+		Ctx:         context.Background(),
+		CloseOnce:   sync.Once{},
+		Log:         logger,
+	}
+
+	startDone := make(chan struct{})
+	go func() {
+		proxy.Start()
+		close(startDone)
+	}()
+
+	testMsg := []byte("hello echo server")
+	go func() {
+		clientEnd.Write(testMsg)
+	}()
+
+	buf := make([]byte, 1024)
+	n, err := clientEnd.Read(buf)
+	if err != nil {
+		t.Fatalf("Read from client end failed: %v", err)
+	}
+	if string(buf[:n]) != "hello echo server" {
+		t.Errorf("got %q, want %q", string(buf[:n]), "hello echo server")
+	}
+
+	deadline := time.After(5 * time.Second)
+	for {
+		to, from := counter.Total()
+		if to == 17 && from == 17 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("Timed out waiting for counters: to=%d, from=%d (want 17, 17)", to, from)
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// Close the client end to trigger a normal teardown.
+	clientEnd.Close()
+
+	select {
+	case <-startDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timed out waiting for Start() to return")
+	}
+
+	// Give the surviving pipe goroutine a moment to observe the closed conn.
+	time.Sleep(50 * time.Millisecond)
+
+	out := logBuf.String()
+	if strings.Contains(out, "Read failed") {
+		t.Errorf("clean close produced spurious 'Read failed' WARN: %s", out)
+	}
+	if strings.Contains(out, "Write failed") {
+		t.Errorf("clean close produced spurious 'Write failed' WARN: %s", out)
 	}
 }
 

@@ -2,27 +2,21 @@
 
 A lightweight TLS-terminating TCP and HTTP reverse proxy written in Go.
 
-tlspxy sits in front of your services and handles TLS termination, mutual TLS authentication, and request proxying for both raw TCP and HTTP traffic.
+tlspxy sits in front of your services and handles TLS termination, mutual TLS, and request proxying for both raw TCP and HTTP traffic.
 
 ## Features
 
-- **TCP and HTTP/HTTPS** reverse proxy modes
-- **HTTP/2** support with ALPN negotiation
-- **Configurable TLS versions** and cipher suites (server and backend)
-- **SNI-based certificate selection** for multi-domain hosting
-- **Certificate hot-reload** via SIGHUP (zero-downtime cert rotation)
-- **Mutual TLS (mTLS)** with client certificate require/verify
-- **Let's Encrypt** automatic certificate provisioning
-- **Prometheus metrics** for connections, bytes transferred, and errors
-- **Health check endpoint** (HTTP mode)
-- **Structured logging** via `log/slog` with configurable levels and destinations
-- **Graceful shutdown** on SIGINT/SIGTERM
-- **Config validation** with `--validate` flag
-- **Docker support** with multi-stage Alpine-based image
+- TCP and HTTP/HTTPS reverse proxy modes, with HTTP/2 and ALPN
+- SNI-based certificate selection and zero-downtime cert reload (SIGHUP or automatic file watching)
+- Mutual TLS on both sides: client cert require/verify, backend client certs
+- Let's Encrypt automatic certificates
+- HAProxy PROXY protocol (v1/v2) to preserve client IPs in TCP mode
+- Prometheus metrics, health check endpoint, structured logging
+- Single static binary; Docker image included
 
 ## Quick Start
 
-Create a config file `config.yaml`:
+Create `config.yaml`:
 
 ```yaml
 #tlspxy
@@ -40,25 +34,18 @@ remote:
 
 > **Note:** Config files must start with `#tlspxy` on the first line to be auto-discovered.
 
-Run the proxy:
+Run it:
 
 ```sh
 tlspxy -config config.yaml
 ```
 
-Validate config without starting:
-
-```sh
-tlspxy -config config.yaml -validate
-```
+Add `-validate` to check the config and print the resolved settings without starting. `-version` prints version and commit.
 
 ### Docker
 
 ```sh
-# Build
 make docker
-
-# Run
 docker run -v /path/to/config.yaml:/etc/tlspxy.yaml \
   -p 8443:8443 \
   elcolio/tlspxy:latest -config /etc/tlspxy.yaml
@@ -66,13 +53,13 @@ docker run -v /path/to/config.yaml:/etc/tlspxy.yaml \
 
 ## Configuration
 
-Configuration is loaded in layers, with each layer overriding the previous:
+Configuration is loaded in layers, each overriding the previous:
 
-1. **Built-in defaults**
-2. **YAML files** in the working directory (auto-discovered by `#tlspxy` header)
-3. **YAML files/directories** specified via `-config`
-4. **Environment variables**
-5. **CLI flags**
+1. Built-in defaults
+2. YAML files in the working directory (auto-discovered by `#tlspxy` header)
+3. YAML files/directories given via `-config` (a directory loads all its `#tlspxy` files)
+4. Environment variables: prefix `TLSPXY_`, dots become underscores, uppercase (`remote.addr` → `TLSPXY_REMOTE_ADDR`)
+5. CLI flags: dots become dashes (`remote.addr` → `-remote-addr`)
 
 ### Full Config Reference
 
@@ -118,7 +105,7 @@ remote:
     dial: "10s"              # Backend dial (connection establishment) timeout; also bounds backend TLS handshake
   tls:
     enable: true             # Use TLS when connecting to the backend
-    verify: true             # Verify backend certificate
+    verify: true             # Verify backend certificate (false = InsecureSkipVerify; not for production)
     cert: ""                 # Client certificate for backend mTLS
     key: ""                  # Client key for backend mTLS
     ca: ""                   # Custom CA for backend verification
@@ -130,8 +117,8 @@ remote:
 
 log:
   level: "info"              # Log level: debug, info, warning, error
-  contents: false            # Log proxied data content (use with caution)
-  destination: "stdout"      # Log destination: stdout, file path, or syslog://address
+  contents: false            # Log proxied data content at debug level (very verbose)
+  destination: "stdout"      # stdout, /path/to/file, or syslog://address
 
 metrics:
   enable: false              # Enable Prometheus metrics
@@ -139,113 +126,29 @@ metrics:
   path: "/metrics"           # Metrics endpoint path
 ```
 
-`server.maxconns` limits accepted TCP connections. In HTTP/2 mode, multiple concurrent streams can share one accepted connection; use backend/request-level limits if you need per-request concurrency control.
+Notes:
 
-### Environment Variables
-
-All environment variables use the `TLSPXY_` prefix to avoid collisions with standard variables (e.g., `REMOTE_ADDR`, `PATH`). The prefix is stripped, then dots are replaced by underscores, all uppercase:
-
-| Config Key | Environment Variable |
-|---|---|
-| `server.addr` | `TLSPXY_SERVER_ADDR` |
-| `server.type` | `TLSPXY_SERVER_TYPE` |
-| `server.http2` | `TLSPXY_SERVER_HTTP2` |
-| `server.trustxff` | `TLSPXY_SERVER_TRUSTXFF` |
-| `server.tls.minversion` | `TLSPXY_SERVER_TLS_MINVERSION` |
-| `server.tls.autoreload` | `TLSPXY_SERVER_TLS_AUTORELOAD` |
-| `remote.addr` | `TLSPXY_REMOTE_ADDR` |
-| `remote.proxyprotocol` | `TLSPXY_REMOTE_PROXYPROTOCOL` |
-| `remote.timeouts.dial` | `TLSPXY_REMOTE_TIMEOUTS_DIAL` |
-| `remote.tls.enable` | `TLSPXY_REMOTE_TLS_ENABLE` |
-| `remote.tls.verify` | `TLSPXY_REMOTE_TLS_VERIFY` |
-| `log.level` | `TLSPXY_LOG_LEVEL` |
-| `metrics.enable` | `TLSPXY_METRICS_ENABLE` |
-
-Any config key follows the same pattern: add the `TLSPXY_` prefix, replace `.` with `_`, and uppercase.
-
-### CLI Flags
-
-Flag names use dashes instead of dots:
-
-```sh
-tlspxy \
-  -server-addr ":8443" \
-  -server-type tcp \
-  -remote-addr "127.0.0.1:8080" \
-  -remote-tls-enable=false \
-  -log-level debug
-```
-
-Use `-config` to specify one or more config files or directories:
-
-```sh
-tlspxy -config /etc/tlspxy/config.yaml
-tlspxy -config /etc/tlspxy.d/           # loads all #tlspxy YAML files in directory
-```
-
-Use `-version` to print version and commit info. Use `-validate` to check config and exit.
+- **Durations** use Go syntax (`30s`, `5m`); invalid values fail validation at startup. `"0s"` / empty means unbounded or disabled.
+- **Cipher suite names** must match Go's `crypto/tls` naming (e.g. `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`). TLS 1.3 suites are not configurable — Go always uses the mandatory ones.
+- **`server.maxconns`** limits accepted connections. In HTTP/2 mode multiple streams share one connection; use request-level limits if you need per-request control.
+- **SNI config is YAML-only** (no flag/env equivalent).
 
 ## Server TLS
 
-### Certificate and Key
+Set `server.tls.cert` and `server.tls.key` together to terminate TLS. If neither is set (and Let's Encrypt is disabled), the server runs without TLS. If TLS is requested but the cert/key/CA fails to load, startup fails — there is no silent fallback to plaintext.
 
-```yaml
-server:
-  tls:
-    cert: "/path/to/server.crt"
-    key: "/path/to/server.key"
-```
+For TLS listeners, tlspxy completes the client handshake (bounded by `server.timeouts.handshake`) **before** dialing the backend, so bare TCP probes and port scanners never consume a backend connection.
 
-Both `cert` and `key` must be provided together. If neither is set (and Let's Encrypt is disabled), the server runs without TLS. If a TLS configuration is requested but fails to load (missing or invalid cert/key/CA), startup fails rather than silently falling back to a plaintext listener.
+### Certificate Reload
 
-### TLS Version and Cipher Suites
+Certificates loaded from files can be rotated with zero downtime — existing connections keep the old cert, new connections get the new one, and a cert that fails to load is ignored in favor of the previous one. Two mechanisms:
 
-```yaml
-server:
-  tls:
-    minversion: "1.2"        # Minimum TLS version (1.0, 1.1, 1.2, 1.3)
-    maxversion: "1.3"        # Maximum TLS version
-    ciphersuites: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
-```
+- **SIGHUP**: replace the files on disk, then `kill -HUP $(pidof tlspxy)`. Reloads the default and all SNI certificates.
+- **Automatic** (`server.tls.autoreload: true`): watches the cert/key files and reloads on change, debounced. Directory-level watching means atomic rename and symlink swaps are detected — recommended for Kubernetes mounted secrets and certbot-style rotation.
 
-When left empty, Go defaults are used (TLS 1.2 minimum, system-selected cipher suites). Cipher suite names must match Go's `crypto/tls` naming (e.g., `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`). TLS 1.3 cipher suites are not configurable -- Go always uses the mandatory TLS 1.3 suites.
+Neither applies under Let's Encrypt, which manages its own certificate lifecycle.
 
-### ALPN Negotiation
-
-```yaml
-server:
-  tls:
-    alpn: "h2,http/1.1"     # Advertised protocols
-```
-
-### Certificate Hot-Reload
-
-When TLS certificates are loaded from files (not Let's Encrypt), tlspxy supports zero-downtime certificate rotation via SIGHUP:
-
-```sh
-# Replace cert files on disk, then signal the process
-kill -HUP $(pidof tlspxy)
-```
-
-On SIGHUP, tlspxy reloads the default certificate and all SNI certificates from disk. Existing connections continue using the old certificate; new connections use the reloaded one. If a certificate fails to load, the old certificate is preserved and an error is logged.
-
-#### Automatic reload (filesystem watching)
-
-Set `server.tls.autoreload: true` to also reload certificates automatically whenever the cert or key files change on disk, without sending a signal:
-
-```yaml
-server:
-  tls:
-    autoreload: true       # watch cert/key files and reload on change
-```
-
-tlspxy watches the *directories* containing the certificate and key files (using [fsnotify](https://github.com/fsnotify/fsnotify)) rather than the files themselves. This is important for Kubernetes mounted secrets and certbot-style rotation, where the file is replaced via an atomic rename/symlink swap that would otherwise leave a file-level watch pointing at a stale inode. Bursts of events (cert and key written back-to-back) are debounced (~500ms) into a single reload. Reloads use the same fail-safe semantics as SIGHUP: a bad certificate on disk is ignored and the previous certificate is kept.
-
-SIGHUP still works regardless of this setting; autoreload is opt-in and recommended for containerized deployments with mounted secrets. Like SIGHUP, it is unavailable under Let's Encrypt (which manages its own certificate lifecycle).
-
-### SNI-Based Certificate Selection
-
-Serve different certificates based on the client's requested hostname:
+### SNI Multi-Domain Certificates
 
 ```yaml
 server:
@@ -256,12 +159,9 @@ server:
       - hostname: "app.example.com"
         cert: /path/to/app.crt
         key: /path/to/app.key
-      - hostname: "api.example.com"
-        cert: /path/to/api.crt
-        key: /path/to/api.key
 ```
 
-Lookup order: exact hostname match, then default certificate. SNI configuration is YAML-only (not available via flags or env vars). All SNI certificates are reloaded on SIGHUP alongside the default certificate.
+Exact hostname match first, then the default certificate.
 
 ### Client Certificates (mTLS)
 
@@ -271,12 +171,10 @@ server:
     cert: "/path/to/server.crt"
     key: "/path/to/server.key"
     ca: "/path/to/client-ca.crt"
-    require: true    # Require a client cert (any valid cert)
-    verify: true     # Require AND verify against the CA (overrides require)
+    verify: true
 ```
 
-- `require: true` -- clients must present a certificate, but it is not verified against the CA
-- `verify: true` -- clients must present a certificate that is valid against the configured CA
+`require: true` demands a client certificate without verifying it; `verify: true` demands one that validates against the configured CA (and overrides `require`).
 
 ### Let's Encrypt
 
@@ -289,11 +187,40 @@ server:
       cachedir: "/var/cache/letsencrypt"
 ```
 
-Automatically obtains and renews TLS certificates from Let's Encrypt. The server must be reachable on port 443 for the ACME challenge. Certificate hot-reload via SIGHUP is not available when using Let's Encrypt (it manages its own certificate lifecycle).
+Certificates are obtained and renewed automatically. The server must be reachable on port 443 for the ACME challenge.
+
+## Backend TLS
+
+Backend connections use TLS by default, verified against system roots. Common variations, all under `remote.tls`:
+
+- **Custom CA**: set `ca` to the CA file; set `sysroots: false` to trust only that CA.
+- **Backend mTLS**: set `cert` and `key` to present a client certificate.
+- **Plaintext backend**: `enable: false`.
+- **Skip verification**: `verify: false` (sets `InsecureSkipVerify`; not for production).
+
+Version, cipher suite, and ALPN constraints use the same keys and syntax as the server side.
+
+## Forwarded Headers (HTTP/HTTPS)
+
+The proxy sets `X-Real-IP` to the client peer address, `X-Forwarded-Host` to the inbound `Host`, and `X-Forwarded-Proto` to `https` when the client connection was TLS-terminated.
+
+By default tlspxy treats itself as the trust boundary and **replaces** `X-Forwarded-For` with the real peer, discarding any client-supplied (spoofable) value. Set `server.trustxff: true` only when tlspxy sits behind another trusted proxy — then the peer is appended to the inbound header instead.
+
+## PROXY Protocol (TCP mode)
+
+In TCP mode the backend normally sees only tlspxy's address. Set `remote.proxyprotocol` to `v1` (text) or `v2` (binary) to prepend a HAProxy [PROXY protocol](https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt) header to each backend connection, carrying the real client source and destination addresses:
+
+```yaml
+server:
+  type: tcp
+remote:
+  addr: "127.0.0.1:8080"
+  proxyprotocol: "v1"
+```
+
+The backend must be configured to accept it (nginx `proxy_protocol`, HAProxy `accept-proxy`). TCP mode only; validation rejects it for http/https.
 
 ## HTTP/2
-
-Enable HTTP/2 support for HTTP/HTTPS proxy modes:
 
 ```yaml
 server:
@@ -305,126 +232,11 @@ server:
     alpn: "h2,http/1.1"
 ```
 
-When `http2: true` is set, both the server and the upstream transport are configured for HTTP/2. This requires `server.type` to be `http` or `https` (not `tcp`). Set `server.tls.alpn` to advertise HTTP/2 support to clients.
-
-## Forwarded Headers (HTTP/HTTPS)
-
-In `http`/`https` mode the proxy always sets `X-Real-IP` to the real client peer address, and sets `X-Forwarded-Host` (to the inbound `Host`) and `X-Forwarded-Proto` (`https` when the client connection was TLS-terminated, otherwise `http`).
-
-By default it treats itself as the trust boundary and **replaces** `X-Forwarded-For` with the real peer, discarding any client-supplied value (which is otherwise spoofable). Set `server.trustxff: true` only when tlspxy sits behind another trusted proxy that sets `X-Forwarded-For`; in that case the real peer is appended to the inbound header instead.
-
-## Remote/Backend TLS
-
-### Default (TLS with system roots)
-
-```yaml
-remote:
-  addr: "backend:443"
-  tls:
-    enable: true
-    verify: true
-    sysroots: true
-```
-
-### Custom CA
-
-```yaml
-remote:
-  tls:
-    enable: true
-    verify: true
-    ca: "/path/to/backend-ca.crt"
-    sysroots: false
-```
-
-### Backend mTLS
-
-```yaml
-remote:
-  tls:
-    enable: true
-    cert: "/path/to/client.crt"
-    key: "/path/to/client.key"
-```
-
-### Backend TLS Version / Cipher Config
-
-```yaml
-remote:
-  tls:
-    enable: true
-    minversion: "1.2"
-    maxversion: "1.3"
-    ciphersuites: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
-    alpn: "h2,http/1.1"
-```
-
-### Skip Verification
-
-```yaml
-remote:
-  tls:
-    enable: true
-    verify: false
-```
-
-Sets `InsecureSkipVerify: true` on the backend connection. Not recommended for production.
-
-### No TLS
-
-```yaml
-remote:
-  tls:
-    enable: false
-```
-
-## PROXY Protocol (TCP mode)
-
-In TCP mode, TLS termination hides the real client address from the backend: the
-backend only sees tlspxy's address. To preserve the original client identity,
-tlspxy can prepend a HAProxy [PROXY protocol](https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt)
-header to each new backend connection, carrying the real client source IP/port
-and the local destination IP/port.
-
-```yaml
-server:
-  type: tcp
-remote:
-  addr: "127.0.0.1:8080"
-  proxyprotocol: "v1"   # "" (off, default), "v1" (text), or "v2" (binary)
-```
-
-- `v1` emits a human-readable text line, e.g. `PROXY TCP4 203.0.113.7 198.51.100.2 56324 443\r\n`.
-- `v2` emits the compact binary header (12-byte signature + address block).
-- If the client/destination addresses cannot be resolved to TCP addresses, tlspxy
-  falls back to `PROXY UNKNOWN\r\n` (v1) or the UNSPEC form with a zero-length
-  address block (v2).
-
-The backend must be configured to accept the PROXY protocol (e.g. nginx
-`proxy_protocol`, HAProxy `accept-proxy`). PROXY protocol applies only to TCP
-mode; setting it with `server.type` http/https fails validation.
-
-## Handshake Timeout (TLS listeners)
-
-For TLS listeners, tlspxy completes the client TLS handshake before dialing the
-backend, so bare TCP connections and port scanners never consume a backend
-connection. The handshake is bounded by `server.timeouts.handshake` (default
-`10s`); connections that fail or time out are closed and logged at info level
-without dialing the backend. Non-TLS listeners are unaffected so that
-server-speaks-first protocols (SMTP, MySQL) still work.
+Configures both the server and the backend transport for HTTP/2. Requires `server.type` http/https; set `alpn` so clients negotiate `h2`.
 
 ## Metrics
 
-Enable Prometheus metrics:
-
-```yaml
-metrics:
-  enable: true
-  addr: ":9090"
-  path: "/metrics"
-```
-
-Available metrics:
+Enable with `metrics.enable: true` (served on `metrics.addr` at `metrics.path`):
 
 | Metric | Type | Description |
 |---|---|---|
@@ -436,36 +248,15 @@ Available metrics:
 
 ## Health Check
 
-In HTTP/HTTPS mode, set `server.healthcheck` to a path to enable a health check endpoint:
-
-```yaml
-server:
-  type: http
-  healthcheck: "/healthz"
-```
-
-Requests to that path return `200 OK` with `{"status":"ok"}`. This is a proxy liveness check and does not probe the backend. All other requests are proxied normally.
+In HTTP/HTTPS mode, set `server.healthcheck: "/healthz"` to serve `200 OK` / `{"status":"ok"}` on that path. This is a proxy liveness check — it does not probe the backend. All other paths are proxied normally.
 
 ## Logging
 
-```yaml
-log:
-  level: "info"            # debug, info, warning, error
-  destination: "stdout"    # stdout, /path/to/file, or syslog://address
-  contents: false          # log proxied data (debug level)
-```
-
-Destinations:
-
-- `stdout` -- write to standard output (default)
-- `/path/to/file` -- append to the specified file
-- `syslog://address` -- send to a syslog server (supported on Linux, macOS, Windows)
-
-Setting `contents: true` logs the actual proxied data at debug level. This generates significant output and should only be used for debugging.
+Structured logging via `log/slog`. `log.destination` accepts `stdout`, a file path, or `syslog://address` (Linux, macOS, Windows). `log.contents: true` logs proxied payloads at debug level — very verbose, debugging only.
 
 ## Examples
 
-See [`contrib/examples/`](contrib/examples/) for complete example configurations:
+Complete configurations in [`contrib/examples/`](contrib/examples/):
 
 | Example | Description |
 |---|---|
@@ -482,14 +273,7 @@ See [`contrib/examples/`](contrib/examples/) for complete example configurations
 Requires **Go 1.24+**.
 
 ```sh
-# Build binary
-make build
-
-# Run tests
-make test
-
-# Build Docker image
-make docker
+make build     # static binary in bin/
+make test      # go test -race ./...
+make docker    # Docker image
 ```
-
-The binary is output to `bin/` and is statically compiled with CGO disabled.

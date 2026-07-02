@@ -35,8 +35,8 @@ Run locally without building: `go run . -config contrib/examples/basic-tcp.yml -
 ## Architecture
 
 `main.go` is the entry point and orchestrator. It loads config, builds the TLS listener, then branches on `server.type`:
-- **tcp** — manual `Accept()` loop spawning a `proxy.TCPProxy` goroutine per connection (raw byte copying).
-- **http/https** — a `httputil.ReverseProxy` wrapping a custom `proxy.Transport`, optionally wrapped by `health.CheckMiddleware`, served via `http.Server`. HTTP/2 is wired with `golang.org/x/net/http2` when `server.http2` is set.
+- **tcp** — manual `Accept()` loop spawning a `proxy.TCPProxy` goroutine per connection (raw byte copying). For TLS listeners, `Start()` completes the client handshake (bounded by `server.timeouts.handshake`) **before** dialing the backend so bare TCP probes never consume a backend connection; non-TLS listeners skip the gate so server-speaks-first protocols (SMTP, MySQL) work. `remote.proxyprotocol` sends a HAProxy PROXY v1/v2 header (hand-rolled in `proxy/proxyproto.go` — deliberately no third-party dep) as the first bytes on each backend connection.
+- **http/https** — a `httputil.ReverseProxy` using the **Rewrite API** (`proxy.NewRewrite` in `proxy/rewrite.go`, not the legacy `Director`) wrapping a custom `proxy.Transport`, optionally wrapped by `health.CheckMiddleware`, served via `http.Server`. HTTP/2 is wired with `golang.org/x/net/http2` when `server.http2` is set.
 
 Connection limiting (`server.maxconns`) is implemented differently per mode: a semaphore channel around the Accept loop for TCP, and via `http.Server.ConnState` for HTTP.
 
@@ -61,7 +61,34 @@ Built on **koanf**. Precedence, lowest to highest: built-in defaults → YAML fi
 - `internal/health` — health-check middleware for HTTP mode.
 - `internal/loadtest` + `cmd/loadtest` — self-contained load-testing harness, generator, and reporting.
 
-## Notes
+## Conventions and gotchas
 
-- The README is the canonical config reference (full YAML schema, env var table, examples in `contrib/examples/`). Keep it in sync when changing config keys.
-- Version/commit are injected via ldflags (`main.AppVersion`, `main.CommitID`); bump `VERSION` in the Makefile on release.
+### Adding a config key (checklist)
+
+Config tests **fail** if any step is skipped: every key needs an entry in `internal/config/defaults.go`, a description in `flagDesc`, and membership in a `helpGroups()` group (`TestFlagDescCompleteness` / `TestHelpGroupsCoversAllFlags` enforce the latter two). Add constraint checks to `ValidateConfig` where applicable, and update the README (YAML schema comment; the config-layering section covers env/flag naming). The README is the canonical user-facing config reference — keep it in sync.
+
+### Durations
+
+Never `time.ParseDuration` with a discarded error in `main.go`. All `server.timeouts.*` and `remote.timeouts.dial` values are validated in `ValidateConfig` (non-empty unparseable → hard error) and resolved via `config.Duration(k, key)` (empty → 0 = unbounded/disabled). New duration keys must be added to the validation loop in `ValidateConfig`.
+
+### HTTP proxy (`proxy/rewrite.go`)
+
+The stdlib strips inbound `Forwarded`/`X-Forwarded-*` from the outbound request **before** calling a `Rewrite` func (unlike `Director`). `trustxff: true` works by copying `pr.In`'s `X-Forwarded-For` into `pr.Out` before `SetXForwarded` so the peer is appended rather than replacing. Don't reintroduce `Director` — `Rewrite` also closes its header-smuggling pitfalls.
+
+### TCPProxy zero-value defaults
+
+`TCPProxy` struct fields are wired from config in `main.go`, but zero values preserve legacy behavior for direct constructors (tests): `DialTimeout` 0 → 30s, `HandshakeTimeout` 0 → 10s. Keep that pattern for new fields — tests construct `TCPProxy` directly without config.
+
+### Other patterns
+
+- Guard all metrics updates with `metrics.Enabled.Load()` — counters are nil until `metrics.Init()`.
+- `tls/watcher.go` watches cert **directories**, not files (k8s/certbot atomic rename/symlink swaps kill file-level watches). Any `Create` in a watched dir triggers a debounced reload; spurious reloads are harmless because `ReloadAll` is fail-safe. The debounce is a package var (`watchDebounce`) captured at `Watch()` start — mutating it after start races (tests set it before).
+- Startup is fail-closed: requested-but-broken TLS/watcher/config aborts rather than degrading (no silent plaintext fallback).
+- Failed client TLS handshakes log at **Info**, not Warn/Error — they're routine (port scanners) and must not spam logs.
+- Pre-existing `gofmt -l` drift in `internal/loadtest/report.go`, `scenario.go`, and `internal/tls/remote_test.go`; don't churn them in unrelated changes.
+
+## Releasing
+
+1. Bump `VERSION` in the Makefile (ldflags inject `main.AppVersion`/`main.CommitID`).
+2. Commit, tag `vX.Y.Z`, push branch and tag.
+3. `gh release create vX.Y.Z --title vX.Y.Z --notes "..."` (releases exist for prior versions; keep the pattern).

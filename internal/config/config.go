@@ -78,24 +78,6 @@ var flagDesc = map[string]string{
 	"metrics-enable": "Enable Prometheus metrics endpoint",
 	"metrics-addr":   "Metrics server listen address (host:port)",
 	"metrics-path":   "Metrics endpoint path",
-
-	// SigV4 gateway
-	"sigv4-enable":             "Enable the AWS SigV4 credential-translation gateway (http/https modes only)",
-	"sigv4-keystore":           "Path to the client access-key keystore YAML file",
-	"sigv4-autoreload":         "Watch the keystore file and reload automatically on change (fsnotify)",
-	"sigv4-service":            "Default target AWS service (e.g. s3, dynamodb)",
-	"sigv4-region":             "Default target AWS region (e.g. us-east-1)",
-	"sigv4-endpoint":           "Default target endpoint URL (empty = https://<service>.<region>.amazonaws.com)",
-	"sigv4-hostoverride":       "Allow the inbound Host header to override the target service/region",
-	"sigv4-clockskew":          "Maximum allowed clock skew for inbound signatures (e.g. 5m)",
-	"sigv4-maxbodysize":        "Maximum inbound request body size in bytes buffered for verification",
-	"sigv4-creds-source":       "Outbound base credential source: static, default, or webidentity",
-	"sigv4-creds-accesskey":    "Static outbound AWS access key ID (source=static)",
-	"sigv4-creds-secretkey":    "Static outbound AWS secret access key (source=static)",
-	"sigv4-creds-sessiontoken": "Static outbound AWS session token (source=static, optional)",
-	"sigv4-creds-tokenfile":    "Web identity token file path (source=webidentity)",
-	"sigv4-creds-rolearn":      "Web identity role ARN to assume (source=webidentity)",
-	"sigv4-creds-sessionname":  "Role session name used for AssumeRole / web identity",
 }
 
 // flagGroup defines the display order and grouping for help output.
@@ -179,27 +161,6 @@ func helpGroups() []flagGroup {
 				"metrics-enable",
 				"metrics-addr",
 				"metrics-path",
-			},
-		},
-		{
-			name: "SigV4 gateway",
-			flags: []string{
-				"sigv4-enable",
-				"sigv4-keystore",
-				"sigv4-autoreload",
-				"sigv4-service",
-				"sigv4-region",
-				"sigv4-endpoint",
-				"sigv4-hostoverride",
-				"sigv4-clockskew",
-				"sigv4-maxbodysize",
-				"sigv4-creds-source",
-				"sigv4-creds-accesskey",
-				"sigv4-creds-secretkey",
-				"sigv4-creds-sessiontoken",
-				"sigv4-creds-tokenfile",
-				"sigv4-creds-rolearn",
-				"sigv4-creds-sessionname",
 			},
 		},
 	}
@@ -529,7 +490,7 @@ func ValidateConfig(k *koanf.Koanf) error {
 	// 7. Timeout values must be valid Go durations. An empty string is allowed
 	// (it means "use the default" or "disabled/unbounded" depending on the key),
 	// but a non-empty value that does not parse as a Go duration is a hard error.
-	for _, key := range []string{"server.timeouts.read", "server.timeouts.write", "server.timeouts.idle", "server.timeouts.handshake", "remote.timeouts.dial", "sigv4.clockskew"} {
+	for _, key := range []string{"server.timeouts.read", "server.timeouts.write", "server.timeouts.idle", "server.timeouts.handshake", "remote.timeouts.dial"} {
 		if v := k.String(key); v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
 				flagName := strings.ReplaceAll(key, ".", "-")
@@ -581,36 +542,6 @@ func ValidateConfig(k *koanf.Koanf) error {
 	}
 	if k.String("remote.proxyprotocol") != "" && serverType != "tcp" {
 		return fmt.Errorf("remote.proxyprotocol is only valid with server.type tcp, got %q\n  PROXY protocol applies to raw TCP backends only", serverType)
-	}
-
-	// 13. Validate SigV4 gateway configuration
-	if k.Bool("sigv4.enable") {
-		if serverType != "http" && serverType != "https" {
-			return fmt.Errorf("sigv4.enable is only valid with server.type http or https, got %q\n  the SigV4 gateway requires HTTP-layer request inspection\n  set via: -server-type or server.type in config", serverType)
-		}
-		if k.String("sigv4.keystore") == "" {
-			return fmt.Errorf("sigv4.keystore is required when sigv4.enable is true\n  set the path to the client keystore YAML file\n  set via: -sigv4-keystore or TLSPXY_SIGV4_KEYSTORE")
-		}
-		switch src := k.String("sigv4.creds.source"); src {
-		case "static":
-			if k.String("sigv4.creds.accesskey") == "" || k.String("sigv4.creds.secretkey") == "" {
-				return fmt.Errorf("sigv4.creds.accesskey and sigv4.creds.secretkey are required when sigv4.creds.source is static")
-			}
-		case "webidentity":
-			if k.String("sigv4.creds.tokenfile") == "" || k.String("sigv4.creds.rolearn") == "" {
-				return fmt.Errorf("sigv4.creds.tokenfile and sigv4.creds.rolearn are required when sigv4.creds.source is webidentity")
-			}
-		case "default", "":
-			// ok: IMDS/default credential chain
-		default:
-			return fmt.Errorf("sigv4.creds.source must be one of static, default, webidentity; got %q\n  set via: -sigv4-creds-source or TLSPXY_SIGV4_CREDS_SOURCE", src)
-		}
-		if k.String("sigv4.service") == "" && !k.Bool("sigv4.hostoverride") {
-			return fmt.Errorf("sigv4.service is required when sigv4.hostoverride is false\n  set the default target service, e.g. -sigv4-service s3")
-		}
-		if k.String("sigv4.region") == "" && !k.Bool("sigv4.hostoverride") {
-			return fmt.Errorf("sigv4.region is required when sigv4.hostoverride is false\n  set the default target region, e.g. -sigv4-region us-east-1")
-		}
 	}
 
 	// 12. Validate min <= max version

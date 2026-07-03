@@ -23,7 +23,6 @@ import (
 	"github.com/colebrumley/tlspxy/internal/metrics"
 	"github.com/colebrumley/tlspxy/internal/proxy"
 	sighandler "github.com/colebrumley/tlspxy/internal/signal"
-	"github.com/colebrumley/tlspxy/internal/sigv4"
 	tlsconfig "github.com/colebrumley/tlspxy/internal/tls"
 	"golang.org/x/net/http2"
 )
@@ -322,41 +321,7 @@ func main() {
 			Transport: pt,
 		}
 
-		// When the SigV4 gateway is enabled, it replaces the plain reverse
-		// proxy: it verifies inbound client signatures, re-signs with mapped
-		// AWS credentials, and forwards to the AWS endpoint. Startup is
-		// fail-closed — a broken keystore/credential/target config aborts.
 		var handler http.Handler = rp
-		if k.Bool("sigv4.enable") {
-			clockSkew := config.Duration(k, "sigv4.clockskew")
-			gw, gwErr := sigv4.Build(rootCtx, k, pt, clockSkew)
-			if gwErr != nil {
-				slog.Error("Failed to initialize SigV4 gateway", "error", gwErr)
-				listener.Close()
-				os.Exit(1)
-			}
-			handler = gw.Handler
-			slog.Info("SigV4 credential-translation gateway enabled", "keys", gw.Keystore.Len())
-
-			shm.AddHandler(func() {
-				if err := gw.Keystore.ReloadAll(); err != nil {
-					slog.Error("Failed to reload SigV4 keystore", "error", err)
-				} else {
-					slog.Info("SigV4 keystore reloaded successfully", "keys", gw.Keystore.Len())
-				}
-			}, syscall.SIGHUP)
-			slog.Info("SigV4 keystore hot-reload enabled (send SIGHUP to reload)")
-
-			if k.Bool("sigv4.autoreload") {
-				if err := gw.Keystore.Watch(rootCtx); err != nil {
-					slog.Error("Failed to start SigV4 keystore auto-reload watcher", "error", err)
-					listener.Close()
-					os.Exit(1)
-				}
-				slog.Info("SigV4 keystore auto-reload enabled (watching keystore file)")
-			}
-		}
-
 		if hcPath := k.String("server.healthcheck"); hcPath != "" {
 			handler = health.CheckMiddleware(hcPath, handler)
 		}
